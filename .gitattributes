@@ -1,0 +1,21 @@
+# 统一换行与二进制处理，保证跨平台协作时行尾一致。
+# 仓库内统一存 LF；检出到工作区时由 Git 按平台处理。
+* text=auto
+
+# 源码 / 文档 / 数据：统一 LF
+*.py    text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.json  text eol=lf
+*.html  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# 二进制文件不做任何转换
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.pdf   binary
+*.xlsx  binary
+*.zip   binary

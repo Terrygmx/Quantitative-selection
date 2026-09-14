@@ -1,0 +1,9 @@
+# 本项目运行时仅依赖 Python 标准库，无需安装任何第三方 Python 包。
+# 因此 requirements.txt 为空（保留此文件以表明「零 Python 依赖」的约定）。
+#
+# 外部依赖（非 Python 包，需另行具备）：
+#   1) Python 3.8+（推荐 3.10+）
+#   2) Node.js 14+（用于执行数据接口 CLI：westock-data / westock-tool 的 scripts/index.js）
+#
+# 若将来引入第三方库（如 pandas / requests），在此按行追加，例如：
+#   pandas>=2.0
