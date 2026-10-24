@@ -34,6 +34,14 @@ class Tradeability:
 
 
 @dataclass(frozen=True, slots=True)
+class MarketSnapshot:
+    instrument: Instrument
+    last: Decimal
+    previous_close: Decimal
+    tradable: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class Position:
     settled_qty: int = 0
     unsettled_buy_qty: int = 0
@@ -105,9 +113,17 @@ class TradingRulesPlugin:
         self,
         order: Order,
         portfolio: Portfolio,
-        market: Mapping[str, Mapping[str, object]],
+        market: Mapping[str, Mapping[str, object]] | MarketSnapshot,
     ) -> list[Rejection]:
-        snapshot = market.get(order.symbol, {})
+        if isinstance(market, MarketSnapshot):
+            snapshot: Mapping[str, object] = {
+                "instrument": market.instrument,
+                "last": market.last,
+                "previous_close": market.previous_close,
+                "tradable": market.tradable,
+            }
+        else:
+            snapshot = market.get(order.symbol, {})
         if snapshot.get("tradable") is False:
             return [Rejection("SUSPENDED", "instrument is not tradable")]
 

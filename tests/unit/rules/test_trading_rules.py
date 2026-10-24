@@ -219,3 +219,17 @@ def test_continuous_auction_session_matrix(item, time, tradable):
 )
 def test_order_price_must_follow_tick(price, valid):
     assert TradingRulesPlugin().valid_price(instrument(), price) is valid
+
+
+def test_market_snapshot_model_replaces_implicit_mapping():
+    from quant_agent.rules.trading import MarketSnapshot
+
+    snapshot = MarketSnapshot(
+        instrument=instrument(),
+        last=Decimal("10.00"),
+        previous_close=Decimal("10.00"),
+        tradable=True,
+    )
+
+    assert snapshot.instrument.symbol == "sh600519"
+    assert TradingRulesPlugin().validate_order(order(), portfolio(), snapshot) == []
