@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A股尾盘启动隔夜策略 · 看板 2026-09-15</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0;
+  background: #f5f6f8; color: #1f2329; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 22px 18px 40px; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+.sub { color: #6b7280; font-size: 13px; margin-bottom: 16px; }
+.env { background: #fff; border-radius: 12px; padding: 16px 18px; margin-bottom: 18px;
+  border-left: 6px solid #2e7d32; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+.env .st { font-size: 18px; font-weight: 700; color: #2e7d32; }
+.env .row { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px; font-size: 13px; color: #374151; }
+.env .row b { color: #111; }
+.sec { font-size: 15px; font-weight: 600; margin: 20px 0 10px; }
+table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06); font-size: 13px; }
+th, td { padding: 9px 10px; text-align: left; border-bottom: 1px solid #eef0f3; }
+th { background: #f0f2f5; color: #4b5563; font-weight: 600; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.code, th.code { font-family: ui-monospace, Menlo, monospace; color: #6b7280; }
+tr.pass td.total { color: #c0392b; font-weight: 700; }
+tr.miss td.total { color: #b8860b; }
+td.empty { text-align: center; color: #9ca3af; padding: 18px; }
+td.reason { color: #b45309; font-size: 12px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; margin-top: 10px; }
+.card { background: #fff; border-radius: 12px; padding: 14px 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+.card-h { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+.rk { color: #c0392b; }
+.badge { background: #fdecea; color: #c0392b; font-size: 11px; padding: 2px 7px; border-radius: 10px; margin-left: 6px; }
+.total-b { float: right; color: #c0392b; font-size: 17px; }
+.kv { display: flex; gap: 8px; font-size: 12.5px; padding: 3px 0; color: #6b7280; }
+.kv b { color: #111; margin-right: auto; }
+.plan { margin-top: 8px; padding: 8px 10px; background: #f7f8fa; border-radius: 8px; font-size: 12px; color: #374151; }
+.foot { margin-top: 26px; font-size: 12px; color: #9ca3af; line-height: 1.6; border-top: 1px solid #e5e7eb; padding-top: 12px; }
+.tag { display: inline-block; background: #eef2ff; color: #4338ca; font-size: 11px; padding: 2px 8px; border-radius: 10px; }
+</style></head>
+<body><div class="wrap">
+<h1>A股尾盘启动隔夜策略 · 选股看板</h1>
+<div class="sub">快照时刻 14:30（仅使用该时刻及之前数据，无未来函数）｜生成 2026-09-15 <span class="tag">行业RS已启用</span></div>
+
+<div class="env">
+  <div class="st">市场状态：Bear　环境评分 0/10</div>
+  <div class="row">
+    <span>指数平均涨跌 <b>-0.62%</b></span>
+    <span>涨跌家数比 <b>20.4%</b></span>
+    <span>涨停 <b>32.0</b></span>
+    <span>跌停 <b>34.0</b></span>
+    <span style='color:#c0392b'>偏弱环境：门槛提高到 ≥ 80</span>
+  </div>
+</div>
+
+<div class="sec">② 今日候选股票（最多 5 只）</div>
+<table><thead><tr><th>排名</th><th>股票</th><th>代码</th><th class="num">涨幅</th>
+  <th class="num">下午动量</th><th class="num">成交量</th><th class="num">相对强弱</th>
+  <th class="num">风险</th><th class="num">总分</th></tr></thead>
+<tbody><tr><td colspan='9' class='empty'>今日无符合策略条件的交易机会，建议空仓。</td></tr></tbody></table>
+
+<div class="sec">②b 观察名单（未达买入阈值，仅跟踪）</div>
+<table><thead><tr><th>序</th><th>股票</th><th>代码</th><th class="num">涨幅</th>
+  <th class="num">总分</th><th>未入选原因</th></tr></thead><tbody><tr><td>1</td><td>意华股份</td><td class='code'>sz002897</td><td class='num'>5.55%</td><td class='num'>77.0</td><td class='reason'>总分77.0<80</td></tr><tr><td>2</td><td>山子高科</td><td class='code'>sz000981</td><td class='num'>6.32%</td><td class='num'>75.0</td><td class='reason'>总分75.0<80</td></tr><tr><td>3</td><td>晋控煤业</td><td class='code'>sh601001</td><td class='num'>3.55%</td><td class='num'>68.0</td><td class='reason'>总分68.0<80</td></tr><tr><td>4</td><td>海星股份</td><td class='code'>sh603115</td><td class='num'>3.61%</td><td class='num'>67.0</td><td class='reason'>总分67.0<80; 下午动量10.0<12</td></tr><tr><td>5</td><td>一博科技</td><td class='code'>sz301366</td><td class='num'>4.33%</td><td class='num'>67.0</td><td class='reason'>总分67.0<80; 下午动量4.0<12</td></tr></tbody></table>
+
+<div class="sec">③ 最值得关注的股票（前 3）</div>
+<div class="cards"><div class='empty' style='color:#9ca3af;padding:14px'>无候选。</div></div>
+
+<div class="foot">
+  ⚠️ 以上内容由 AI 基于公开信息整理生成，仅供参考，不构成任何投资建议或个股推荐。投资有风险，决策需谨慎。<br>
+  相对强弱含申万一级行业（实时），数据源：腾讯自选股。次日概率为基于规则的主观估计，非历史统计概率。
+</div>
+</div></body></html>
