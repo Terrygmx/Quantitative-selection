@@ -13,33 +13,27 @@ def test_schema_exists_and_describes_parameters():
     data = json.loads(SCHEMA.read_text(encoding="utf-8"))
 
     assert data["type"] == "object"
-    assert data["required"] == ["lookback", "universe"]
-    assert data["properties"]["lookback"]["minimum"] == 1
-    assert data["properties"]["lookback"]["maximum"] == 5
+    assert data["required"] == ["universe"]
     assert data["properties"]["universe"]["type"] == "array"
 
 
 def test_strategy_validates_schema_configuration():
-    valid = {"lookback": 2, "universe": ["sh600519"]}
-    invalid = {"lookback": 6, "universe": ["sh600519"]}
+    valid = {"universe": ["sh600519"]}
+    invalid = {"universe": []}
 
-    assert strategy_from_config(valid).lookback == 2
-    with pytest.raises(ValueError, match="lookback"):
+    assert strategy_from_config(valid).warmup() == 25
+    with pytest.raises(ValueError, match="universe"):
         strategy_from_config(invalid)
 
 
 @pytest.mark.parametrize(
     ("config", "match"),
     [
-        ({"lookback": 2}, "universe"),
-        ({"universe": ["sh600519"]}, "lookback"),
-        ({"lookback": "2", "universe": ["sh600519"]}, "lookback.*integer"),
-        ({"lookback": 0, "universe": ["sh600519"]}, "lookback.*minimum"),
-        ({"lookback": 6, "universe": ["sh600519"]}, "lookback.*maximum"),
-        ({"lookback": 2, "universe": []}, "universe.*minItems"),
-        ({"lookback": 2, "universe": [""]}, "universe.*minLength"),
-        ({"lookback": 2, "universe": "sh600519"}, "universe.*array"),
-        ({"lookback": 2, "universe": ["sh600519"], "extra": 1}, "unknown configuration keys"),
+        ({}, "universe"),
+        ({"universe": []}, "universe.*minItems"),
+        ({"universe": [""]}, "universe.*minLength"),
+        ({"universe": "sh600519"}, "universe.*array"),
+        ({"universe": ["sh600519"], "lookback": 2}, "unknown configuration keys"),
     ],
 )
 def test_strategy_configuration_rejection_matrix(config, match):

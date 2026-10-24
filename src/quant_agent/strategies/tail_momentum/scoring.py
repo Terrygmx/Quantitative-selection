@@ -427,6 +427,7 @@ def score_relative_strength(
         elif relative >= 0:
             score += positive
     if industry_available:
+        assert industry_change is not None
         relative = stock_day_change - industry_change
         detail["rs_industry"] = relative
         if relative >= 0.015:

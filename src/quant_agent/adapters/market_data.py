@@ -18,6 +18,7 @@ class Bar:
     close: float
     volume: float
     available_at: datetime
+    amount: float = 0.0
 
     def __post_init__(self) -> None:
         if self.available_at < self.timestamp:

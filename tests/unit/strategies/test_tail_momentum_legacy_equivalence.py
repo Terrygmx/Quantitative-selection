@@ -16,7 +16,12 @@ from quant_agent.strategies.tail_momentum.scoring import (
     score_market_env,
     score_stock,
 )
+from quant_agent.strategies.tail_momentum.selection import (
+    TailMomentumSelection,
+    select_tail_momentum,
+)
 from tail_momentum_selector import (
+    hhmm_to_min,
     parse_changedist,
     parse_kline_batch,
     parse_minute,
@@ -143,3 +148,101 @@ def test_fixed_fixture_is_rejected_with_explicit_miss_reasons():
 
     assert score.total < threshold
     assert score.afternoon < 12
+
+
+def test_fixed_fixture_selection_matches_negative_golden_signal():
+    selection = select_tail_momentum(fixture_inputs(), snapshot="1430")
+
+    assert isinstance(selection, TailMomentumSelection)
+    assert selection.date == date(2026, 9, 15)
+    assert selection.snapshot == "1430"
+    assert selection.environment_label == "Bear"
+    assert selection.environment_points == 0
+    assert selection.threshold == 80
+    assert selection.signals == ()
+    candidate = selection.results[0]
+    assert candidate.symbol == "sh600176"
+    assert candidate.passed is False
+    assert candidate.score.total == 62.0
+    assert candidate.miss_reasons == (
+        "TOTAL_BELOW_THRESHOLD",
+        "AFTERNOON_MOMENTUM_BELOW_MINIMUM",
+    )
+    assert selection.to_signal_document() == {
+        "date": "2026-09-15",
+        "snapshot": "1430",
+        "env_label": "Bear",
+        "env_points": 0,
+        "threshold": 80,
+        "candidates": [],
+        "excluded_count": 0,
+    }
+
+
+def test_selection_emits_only_passed_candidates_as_signals():
+    market = fixture_inputs()
+    stock = market.stocks[0]
+    minute = tuple(
+        MinutePoint(
+            time=row.time,
+            price=(
+                45.2 + (47.31 - 45.2) * hhmm_to_min(row.time) / 120
+                if row.time <= "1130"
+                else 47.31
+                if row.time <= "1300"
+                else 47.31 + (49.5 - 47.31) * (hhmm_to_min(row.time) - 120) / 120
+            ),
+            volume=row.volume,
+            amount=row.amount,
+        )
+        for row in stock.minute
+    )
+    rising = StockInput(
+        quote=stock.quote,
+        daily=stock.daily,
+        minute=minute,
+    )
+    passing_market = TailMomentumMarket(
+        date=market.date,
+        stocks=(rising,),
+        indices=market.indices,
+        breadth={"up": 3000, "down": 3000, "limitup": 40, "limitdown": 20},
+    )
+
+    selection = select_tail_momentum(passing_market, snapshot="1430")
+
+    assert selection.signals
+    assert selection.environment_label == "Neutral"
+    assert selection.signals[0].passed is True
+    assert selection.signals[0].miss_reasons == ()
+    assert selection.signals[0].score.total == 79.0
+    assert selection.to_signal_document()["candidates"][0]["code"] == "sh600176"
+
+
+def test_selection_keeps_excluded_inputs_out_of_scoring():
+    market = fixture_inputs()
+    quote = QuoteSnapshot(
+        symbol="sh600000",
+        name="*ST测试",
+        previous_close=10.0,
+        open=10.0,
+    )
+    excluded_stock = StockInput(
+        quote=quote,
+        daily=market.stocks[0].daily,
+        minute=market.stocks[0].minute,
+    )
+    selection = select_tail_momentum(
+        TailMomentumMarket(
+            date=market.date,
+            stocks=(excluded_stock,),
+            indices=market.indices,
+            breadth=market.breadth,
+        ),
+        snapshot="1430",
+    )
+
+    assert selection.results == ()
+    assert selection.excluded[0].symbol == "sh600000"
+    assert selection.excluded[0].reason_code == "ST"
+    assert selection.to_signal_document()["excluded_count"] == 1
