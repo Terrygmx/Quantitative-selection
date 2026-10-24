@@ -113,10 +113,46 @@ class StaticTradingCalendar:
         return cls._for_year(2025, holidays)
 
     @classmethod
-    def for_sse(cls) -> "StaticTradingCalendar":
-        calendars = (cls.for_sse_2023(), cls.for_sse_2024(), cls.for_sse_2025())
+    def for_sse_2026(cls) -> "StaticTradingCalendar":
+        holidays = {
+            date(2026, 1, 1),
+            date(2026, 1, 2),
+            date(2026, 2, 16),
+            date(2026, 2, 17),
+            date(2026, 2, 18),
+            date(2026, 2, 19),
+            date(2026, 2, 20),
+            date(2026, 4, 6),
+            date(2026, 5, 1),
+            date(2026, 5, 4),
+            date(2026, 5, 5),
+            date(2026, 6, 19),
+            date(2026, 9, 25),
+            date(2026, 10, 1),
+            date(2026, 10, 2),
+            date(2026, 10, 5),
+            date(2026, 10, 6),
+            date(2026, 10, 7),
+        }
+        return cls._for_year(2026, holidays)
+
+    @classmethod
+    def for_cn_market(cls) -> "StaticTradingCalendar":
+        """Build the shared SSE/SZSE calendar from the 2023-2026 static datasets."""
+
+        years = (2023, 2024, 2025, 2026)
         return cls(
             day
-            for calendar in calendars
-            for day in calendar._days
+            for year in years
+            for day in getattr(cls, f"for_sse_{year}")()._days
         )
+
+    @classmethod
+    def for_exchange(cls, exchange: str) -> "StaticTradingCalendar":
+        if exchange not in {"SSE", "SZSE"}:
+            raise ValueError(f"unsupported exchange calendar: {exchange}")
+        return cls.for_cn_market()
+
+    @classmethod
+    def for_sse(cls) -> "StaticTradingCalendar":
+        return cls.for_cn_market()

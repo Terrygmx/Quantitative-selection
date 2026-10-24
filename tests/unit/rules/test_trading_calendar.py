@@ -99,3 +99,45 @@ def test_calendar_protocol_is_replaceable():
 
     plugin = TradingRulesPlugin(WeekdayCalendar())
     assert plugin._is_trading_day(date(2024, 2, 12))
+
+
+@pytest.mark.parametrize(
+    ("day", "expected"),
+    [
+        (date(2026, 1, 1), False),
+        (date(2026, 1, 2), False),
+        (date(2026, 1, 5), True),
+        (date(2026, 2, 13), True),
+        (date(2026, 2, 16), False),
+        (date(2026, 2, 20), False),
+        (date(2026, 2, 23), True),
+        (date(2026, 4, 3), True),
+        (date(2026, 4, 6), False),
+        (date(2026, 4, 7), True),
+        (date(2026, 5, 1), False),
+        (date(2026, 5, 4), False),
+        (date(2026, 5, 5), False),
+        (date(2026, 6, 19), False),
+        (date(2026, 9, 25), False),
+        (date(2026, 10, 1), False),
+        (date(2026, 10, 7), False),
+        (date(2026, 10, 8), True),
+    ],
+)
+def test_builtin_calendar_covers_2026_holidays(day, expected):
+    calendar = StaticTradingCalendar.for_cn_market()
+
+    assert calendar.is_trading_day(day) is expected
+
+
+def test_builtin_calendar_is_shared_by_sse_and_szse():
+    from quant_agent.rules.calendar import StaticTradingCalendar
+
+    sse = StaticTradingCalendar.for_exchange("SSE")
+    szse = StaticTradingCalendar.for_exchange("SZSE")
+
+    assert sse._days == szse._days
+    # 2023-2026: both exchanges close on National Day and reopen on the following workday.
+    assert not sse.is_trading_day(date(2023, 10, 2))
+    assert sse.next_trading_day(date(2026, 9, 30)) == date(2026, 10, 8)
+    assert szse.next_trading_day(date(2026, 9, 30)) == date(2026, 10, 8)
