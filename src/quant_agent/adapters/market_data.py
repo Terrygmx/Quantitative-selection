@@ -53,6 +53,9 @@ class InMemoryMarketDataPort:
             for item in self._bars.get(instrument, [])
             if item.timestamp <= as_of and item.available_at <= as_of
         ]
+        latest_by_timestamp: dict[datetime, Bar] = {}
+        for item in visible:
+            latest_by_timestamp[item.timestamp] = item
         if not visible:
             raise DataUnavailable(
                 QualityEvent(
@@ -63,4 +66,4 @@ class InMemoryMarketDataPort:
                     message=f"No bar available for {instrument} as of {as_of.isoformat()}",
                 )
             )
-        return visible
+        return [latest_by_timestamp[timestamp] for timestamp in sorted(latest_by_timestamp)]

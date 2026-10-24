@@ -55,3 +55,16 @@ def test_missing_required_bars_emit_block_quality_event():
     assert event.reason_code == "MISSING_REQUIRED_BAR"
     assert event.symbol == "sh600519"
     assert event.as_of == AS_OF
+
+
+def test_latest_visible_revision_wins_for_same_timestamp():
+    original = bar(EARLIER, close=9.0)
+    correction_before_snapshot = bar(EARLIER, close=9.1, available_at=AS_OF)
+    correction_after_snapshot = bar(EARLIER, close=99.0, available_at=LATER)
+    port = InMemoryMarketDataPort(
+        [original, correction_before_snapshot, correction_after_snapshot]
+    )
+
+    result = port.bars("sh600519", as_of=AS_OF)
+
+    assert [item.close for item in result] == [9.1]
