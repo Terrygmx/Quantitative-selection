@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from quant_agent.domain.models import RunManifest
+
 
 FORBIDDEN_ALWAYS = {
     "submit_order": "TOOL_NOT_ALLOWED",
@@ -27,30 +29,60 @@ class AgentResult:
     reason_code: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class AuditEvent:
+    run_id: str
+    manifest_hash: str
+    agent_id: str
+    tool: str
+    status: str
+
+
 class AgentGateway:
-    def __init__(self, allowed_tools: set[str]):
+    def __init__(self, allowed_tools: set[str], manifest: RunManifest | None = None):
         self.allowed_tools = set(allowed_tools)
+        self.manifest = manifest
+        self.audit_events: list[AuditEvent] = []
 
     def execute(self, request: AgentRequest) -> AgentResult:
         if request.tool in FORBIDDEN_ALWAYS:
-            return AgentResult(
+            result = AgentResult(
                 status="denied",
                 agent_id=request.agent_id,
                 tool=request.tool,
                 reason_code=FORBIDDEN_ALWAYS[request.tool],
             )
+            self._audit(request, result)
+            return result
         if request.tool not in self.allowed_tools:
-            return AgentResult(
+            result = AgentResult(
                 status="denied",
                 agent_id=request.agent_id,
                 tool=request.tool,
                 reason_code="TOOL_NOT_ALLOWED",
             )
-        return AgentResult(
+            self._audit(request, result)
+            return result
+        result = AgentResult(
             status="allowed",
             agent_id=request.agent_id,
             tool=request.tool,
             output={**request.arguments, "mode": "read-only"},
+        )
+        self._audit(request, result)
+        return result
+
+    def _audit(self, request: AgentRequest, result: AgentResult) -> None:
+        if self.manifest is None:
+            return
+        self.audit_events.append(
+            AuditEvent(
+                run_id=self.manifest.run_id,
+                manifest_hash=self.manifest.content_hash,
+                agent_id=request.agent_id,
+                tool=request.tool,
+                status=result.status,
+            )
         )
 
     def validate_output(
