@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from quant_agent.domain.models import Signal
 from quant_agent.strategies.context import StrategyContext
@@ -20,6 +20,18 @@ class TailMomentumStrategy:
             raise ValueError("lookback must be between 1 and 5")
         self.lookback = lookback
         self.universe = tuple(universe)
+
+    @classmethod
+    def from_config(cls, config: Mapping[str, object]) -> "TailMomentumStrategy":
+        unknown = set(config) - {"lookback", "universe"}
+        if unknown:
+            raise ValueError(f"unknown configuration keys: {sorted(unknown)}")
+        if "universe" not in config:
+            raise ValueError("universe is required")
+        return cls(
+            lookback=int(config["lookback"]),
+            universe=config["universe"],
+        )
 
     def warmup(self) -> int:
         return self.lookback

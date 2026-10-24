@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tail momentum overnight configuration",
+  "type": "object",
+  "required": ["lookback", "universe"],
+  "properties": {
+    "lookback": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "universe": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "minItems": 1
+    }
+  },
+  "additionalProperties": false
+}
