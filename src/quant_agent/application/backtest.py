@@ -8,7 +8,7 @@ from typing import Mapping
 from quant_agent.domain.models import Instrument, Order
 from quant_agent.rules.trading import Portfolio as RulesPortfolio
 from quant_agent.rules.trading import Position as RulesPosition
-from quant_agent.rules.trading import Rejection, TradingRulesPlugin
+from quant_agent.rules.trading import MarketSnapshot, Rejection, TradingRulesPlugin
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,14 +151,6 @@ class BacktestEngine:
         )
 
     def _validate_order(self, order: Order, bar: Mapping[str, object]) -> list[Rejection]:
-        portfolio = RulesPortfolio(
-            {
-                order.symbol: RulesPosition(
-                    settled_qty=self.position.settled_qty,
-                    unsettled_buy_qty=self.position.unsettled_buy_qty,
-                )
-            }
-        )
         market = {
             order.symbol: {
                 "last": Decimal(str(bar["open"])),
@@ -167,14 +159,40 @@ class BacktestEngine:
                 "tradable": self.instrument.status == "Active",
             }
         }
-        return self.rules.validate_order(order, portfolio, market)
+        return self.rules.validate_order(order, self._rules_portfolio(), market)
+
+    def _rules_portfolio(self) -> RulesPortfolio:
+        return RulesPortfolio(
+            {
+                self.instrument.symbol: RulesPosition(
+                    settled_qty=self.position.settled_qty,
+                    unsettled_buy_qty=self.position.unsettled_buy_qty,
+                )
+            }
+        )
 
     def equity(self, day: date, close: Decimal) -> Decimal:
         return self.cash + close * (self.position.settled_qty + self.position.unsettled_buy_qty)
 
     def sell_settled(self, day: date, open_price: Decimal, timestamp: datetime) -> list[Event]:
+        bar = {"open": open_price, "previous_close": open_price}
+        order = self._create_order("sell", bar, timestamp)
+        events = [Event("ORDER", timestamp, order=OrderRecord(order.side, order.quantity, order.created_at))]
+        snapshot = MarketSnapshot(
+            instrument=self.instrument,
+            last=open_price,
+            previous_close=self.bars[-1].get("close", open_price)
+            if self.bars
+            else open_price,
+            tradable=self.instrument.status == "Active",
+        )
+        rejections = self.rules.validate_order(order, self._rules_portfolio(), snapshot)
+        if rejections:
+            events.append(Event("REJECTION", timestamp, rejection_code=rejections[0].code))
+            return events
         if self.position.settled_qty < self.config.buy_quantity:
-            raise ValueError("settled quantity is insufficient")
+            events.append(Event("REJECTION", timestamp, rejection_code="T1_UNSETTLED"))
+            return events
         self.position.settled_qty -= self.config.buy_quantity
         fill_price = open_price * (1 - self.config.slippage_rate)
         gross = fill_price * self.config.buy_quantity
@@ -186,7 +204,8 @@ class BacktestEngine:
             str(self._order_id), "sell", fill_price, self.config.buy_quantity,
             commission + tax, timestamp,
         )
-        return [Event("FILL", timestamp, fill=fill, cash_after=self.cash)]
+        events.append(Event("FILL", timestamp, fill=fill, cash_after=self.cash))
+        return events
 
     def same_bar_close_signal_and_fill(self, day: date, close: Decimal) -> None:
         raise ValueError("same bar close signal and fill is forbidden")

@@ -76,9 +76,9 @@ def test_after_settlement_sell_fills_next_open(engine):
     engine.run()
     events = engine.sell_settled(D3, Decimal("10.40"), timestamp=TS3)
 
-    assert events[0].kind == "FILL"
-    assert events[0].fill.price == Decimal("10.38960")
-    assert events[0].cash_after == Decimal("10016.802526000")
+    assert [event.kind for event in events] == ["ORDER", "FILL"]
+    assert events[-1].fill.price == Decimal("10.38960")
+    assert events[-1].cash_after == Decimal("10016.802526000")
     assert engine.position.settled_qty == 0
 
 
@@ -104,3 +104,40 @@ def test_engine_routes_orders_through_rules(engine):
     engine.run()
 
     assert called == {"buy": True, "sell": True}
+
+
+def test_sell_settled_is_rejected_by_trading_rules(engine):
+    from quant_agent.rules.trading import MarketSnapshot
+
+    original_validate = engine.rules.validate_order
+
+    def rejecting_validate(order, portfolio, market):
+        if order.side == "sell":
+            from quant_agent.rules.trading import Rejection
+
+            return [Rejection("LIMIT_DOWN", "test rejection")]
+        return original_validate(order, portfolio, market)
+
+    engine.rules.validate_order = rejecting_validate
+    events = engine.run()
+    engine.rules.validate_order = rejecting_validate
+    result = engine.sell_settled(D3, Decimal("10.40"), timestamp=TS3)
+
+    assert [event.kind for event in result] == ["ORDER", "REJECTION"]
+    assert result[-1].rejection.code == "LIMIT_DOWN"
+    assert engine.position.settled_qty == 100
+
+
+def test_sell_settled_routes_market_snapshot_through_rules(engine):
+    captured = {}
+    original_validate = engine.rules.validate_order
+
+    def validate(order, portfolio, market):
+        captured[order.side] = type(market).__name__
+        return original_validate(order, portfolio, market)
+
+    engine.rules.validate_order = validate
+    engine.run()
+    engine.sell_settled(D3, Decimal("10.40"), timestamp=TS3)
+
+    assert captured == {"buy": "dict", "sell": "MarketSnapshot"}

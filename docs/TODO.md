@@ -22,7 +22,7 @@
 ## M4 回测器
 
 - [ ] 当前 `BacktestEngine` 是单票三日金样本驱动，需重构为通用事件时钟和订单状态机。
-- [ ] 卖出方法和多标的订单仍需全部接入 `TradingRulesPlugin` 与价格带校验；当前买入与 T+1 卖出示例已统一走规则插件。
+- [ ] 卖出订单已接入 `TradingRulesPlugin`、`MarketSnapshot` 与显式 ORDER/REJECTION 事件；多标的订单状态机仍待迁移。
 - [ ] 补净值、年化、最大回撤、夏普、胜率、换手与逐笔成交报告。
 
 ## M5 插件与尾盘动量
