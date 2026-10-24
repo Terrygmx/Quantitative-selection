@@ -1,4 +1,5 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 
 import pytest
@@ -11,9 +12,9 @@ from quant_agent.rules.trading import Portfolio as RulesPortfolio, Position as R
 D1 = date(2026, 9, 14)
 D2 = date(2026, 9, 15)
 D3 = date(2026, 9, 16)
-TS1 = datetime(2026, 9, 14, 14, 31, tzinfo=timezone.utc)
-TS2 = datetime(2026, 9, 15, 9, 31, tzinfo=timezone.utc)
-TS3 = datetime(2026, 9, 16, 9, 31, tzinfo=timezone.utc)
+TS1 = datetime(2026, 9, 14, 14, 31, tzinfo=ZoneInfo("Asia/Shanghai"))
+TS2 = datetime(2026, 9, 15, 9, 31, tzinfo=ZoneInfo("Asia/Shanghai"))
+TS3 = datetime(2026, 9, 16, 9, 31, tzinfo=ZoneInfo("Asia/Shanghai"))
 
 
 @pytest.fixture

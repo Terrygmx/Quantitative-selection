@@ -124,6 +124,12 @@ class TradingRulesPlugin:
             }
         else:
             snapshot = market.get(order.symbol, {})
+        tradeability = self.tradeability(
+            self._instrument_from_snapshot(snapshot, order.symbol),
+            order.created_at,
+        )
+        if not tradeability.tradable:
+            return [Rejection(tradeability.reason_code or "NOT_TRADABLE", "")]
         if snapshot.get("tradable") is False:
             return [Rejection("SUSPENDED", "instrument is not tradable")]
 
@@ -132,8 +138,8 @@ class TradingRulesPlugin:
             if order.quantity > position.settled_qty:
                 return [Rejection("T1_UNSETTLED", "same-day bought quantity is not sellable")]
 
-        instrument = snapshot.get("instrument")
-        if not isinstance(instrument, Instrument):
+        instrument = self._instrument_from_snapshot(snapshot, order.symbol)
+        if instrument is None:
             return [Rejection("MARKET_DATA_MISSING", "instrument metadata is required")]
         try:
             order.validate_quantity(
@@ -141,6 +147,8 @@ class TradingRulesPlugin:
             )
         except ValueError as exc:
             return [Rejection("INVALID_LOT", str(exc))]
+        if not self.valid_price(instrument, order.limit_price):
+            return [Rejection("INVALID_TICK", "limit price must follow instrument tick")]
         previous_close = snapshot.get("previous_close")
         if previous_close is None:
             return [Rejection("MARKET_DATA_MISSING", "previous close is required")]
@@ -162,6 +170,12 @@ class TradingRulesPlugin:
         if order.limit_price == band.floor and snapshot.get("last") == band.floor:
             return [Rejection("LIMIT_DOWN", "order cannot fill at limit-down price")]
         return []
+
+    def _instrument_from_snapshot(
+        self, snapshot: Mapping[str, object], symbol: str
+    ) -> Instrument | None:
+        instrument = snapshot.get("instrument")
+        return instrument if isinstance(instrument, Instrument) else None
 
     def validate_fill_price(
         self,

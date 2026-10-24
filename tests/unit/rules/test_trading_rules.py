@@ -7,6 +7,7 @@ CN_TZ = ZoneInfo("Asia/Shanghai")
 import pytest
 
 from quant_agent.domain.models import Instrument, Order
+from quant_agent.rules.calendar import StaticTradingCalendar
 from quant_agent.rules.trading import Portfolio, Position, TradingRulesPlugin
 
 
@@ -31,7 +32,7 @@ def order(**overrides):
         "side": "buy",
         "quantity": 100,
         "limit_price": Decimal("10.00"),
-        "created_at": datetime(2026, 9, 15, 14, 31, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 9, 15, 14, 31, tzinfo=CN_TZ),
     }
     values.update(overrides)
     return Order(**values)
@@ -233,3 +234,64 @@ def test_market_snapshot_model_replaces_implicit_mapping():
 
     assert snapshot.instrument.symbol == "sh600519"
     assert TradingRulesPlugin().validate_order(order(), portfolio(), snapshot) == []
+
+
+@pytest.mark.parametrize(
+    ("created_at", "expected_code"),
+    [
+        (datetime(2026, 9, 15, 9, 20, tzinfo=CN_TZ), "OUTSIDE_CONTINUOUS_AUCTION"),
+        (datetime(2026, 9, 15, 9, 25, tzinfo=CN_TZ), "OUTSIDE_CONTINUOUS_AUCTION"),
+        (datetime(2026, 9, 15, 11, 31, tzinfo=CN_TZ), "OUTSIDE_CONTINUOUS_AUCTION"),
+        (datetime(2026, 9, 15, 12, 30, tzinfo=CN_TZ), "OUTSIDE_CONTINUOUS_AUCTION"),
+        (datetime(2026, 9, 15, 15, 1, tzinfo=CN_TZ), "OUTSIDE_CONTINUOUS_AUCTION"),
+        (datetime(2026, 9, 15, 9, 45, tzinfo=CN_TZ), None),
+    ],
+)
+def test_order_rejection_matrix_includes_session_times(created_at, expected_code):
+    from quant_agent.rules.trading import MarketSnapshot
+
+    rules = TradingRulesPlugin(StaticTradingCalendar.for_exchange("SSE"))
+    snapshot = MarketSnapshot(
+        instrument=instrument(),
+        last=Decimal("10.00"),
+        previous_close=Decimal("10.00"),
+    )
+    rejections = rules.validate_order(order(created_at=created_at), portfolio(), snapshot)
+
+    codes = [item.code for item in rejections]
+    assert (expected_code in codes) is (expected_code is not None)
+    if expected_code is None:
+        assert codes == []
+
+
+def test_order_rejection_matrix_includes_board_tick_sizes():
+    from quant_agent.rules.trading import MarketSnapshot
+
+    rules = TradingRulesPlugin()
+    star = instrument(symbol="sh688001", board="STAR", tick=Decimal("0.01"))
+    main = instrument(symbol="sh600519", board="MainBoard", tick=Decimal("0.01"))
+
+    star_snapshot = MarketSnapshot(
+        instrument=star,
+        last=Decimal("10.00"),
+        previous_close=Decimal("10.00"),
+    )
+    main_snapshot = MarketSnapshot(
+        instrument=main,
+        last=Decimal("10.00"),
+        previous_close=Decimal("10.00"),
+    )
+
+    invalid_star = rules.validate_order(
+        order(symbol="sh688001", limit_price=Decimal("10.005")),
+        portfolio("sh688001"),
+        star_snapshot,
+    )
+    valid_main = rules.validate_order(
+        order(symbol="sh600519", limit_price=Decimal("10.01")),
+        portfolio("sh600519"),
+        main_snapshot,
+    )
+
+    assert [item.code for item in invalid_star] == ["INVALID_TICK"]
+    assert valid_main == []

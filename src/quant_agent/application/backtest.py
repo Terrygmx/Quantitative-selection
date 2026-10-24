@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 from typing import Mapping
 
 from quant_agent.domain.models import Instrument, Order
 from quant_agent.rules.trading import Portfolio as RulesPortfolio
 from quant_agent.rules.trading import Position as RulesPosition
 from quant_agent.rules.trading import MarketSnapshot, Rejection, TradingRulesPlugin
+
+
+CN_MARKET_TZ = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +92,7 @@ class BacktestEngine:
             signal_bar["date"].day,
             14,
             31,
-            tzinfo=timezone.utc,
+            tzinfo=CN_MARKET_TZ,
         )
         events.append(Event("SIGNAL", signal_time))
 
@@ -99,7 +103,7 @@ class BacktestEngine:
             buy_bar["date"].day,
             9,
             31,
-            tzinfo=timezone.utc,
+            tzinfo=CN_MARKET_TZ,
         )
         order = self._create_order("buy", buy_bar, buy_time)
         events.append(Event("ORDER", buy_time, order=order))
@@ -125,7 +129,7 @@ class BacktestEngine:
             sell_bar["date"].day,
             9,
             31,
-            tzinfo=timezone.utc,
+            tzinfo=CN_MARKET_TZ,
         )
         sell_order = self._create_order("sell", sell_bar, sell_time)
         events.append(Event("ORDER", sell_time, order=sell_order))
