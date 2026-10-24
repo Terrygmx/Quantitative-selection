@@ -210,3 +210,29 @@ def test_backtest_orders_transition_through_state_machine(engine):
     assert engine.order_states.get("order-2").rejection_code == "T1_UNSETTLED"
     assert events[2].fill.order_id == "order-1"
     assert events[4].rejection.code == "T1_UNSETTLED"
+
+
+def test_backtest_exports_json_ready_fill_and_order_details(engine):
+    import json
+
+    engine.run()
+
+    details = engine.execution_details()
+
+    assert details == {
+        "orders": [
+            {"id": "order-1", "side": "buy", "quantity": 100, "status": "FILLED"},
+            {"id": "order-2", "side": "sell", "quantity": 100, "status": "REJECTED", "rejection_code": "T1_UNSETTLED"},
+        ],
+        "fills": [
+            {
+                "order_id": "order-1",
+                "side": "buy",
+                "price": "10.21020",
+                "quantity": 100,
+                "fee": "0.306306000",
+                "timestamp": "2026-09-15T09:31:00+08:00",
+            }
+        ],
+    }
+    json.dumps(details)

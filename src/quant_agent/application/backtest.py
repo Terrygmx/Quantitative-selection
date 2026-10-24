@@ -83,7 +83,37 @@ class BacktestEngine:
         self.cash = config.initial_cash
         self.position = Position()
         self.order_states = OrderStateMachine()
+        self._orders: list[Order] = []
+        self._fills: list[FillRecord] = []
         self._order_id = 0
+
+    def execution_details(self) -> dict[str, list[dict[str, object]]]:
+        orders = [
+            {
+                "id": order.id,
+                "side": order.side,
+                "quantity": order.quantity,
+                "status": self.order_states.get(order.id).status,
+                **(
+                    {"rejection_code": self.order_states.get(order.id).rejection_code}
+                    if self.order_states.get(order.id).rejection_code
+                    else {}
+                ),
+            }
+            for order in self._orders
+        ]
+        fills = [
+            {
+                "order_id": fill.order_id,
+                "side": fill.side,
+                "price": str(fill.price),
+                "quantity": fill.quantity,
+                "fee": str(fill.fee),
+                "timestamp": fill.timestamp.isoformat(),
+            }
+            for fill in self._fills
+        ]
+        return {"orders": orders, "fills": fills}
 
     def run(self) -> list[Event]:
         events: list[Event] = []
@@ -122,6 +152,7 @@ class BacktestEngine:
         self.position.unsettled_buy_qty += order.quantity
         self.order_states.fill(order.id, buy_time)
         fill = FillRecord(order.id, "buy", fill_price, order.quantity, fee, buy_time)
+        self._fills.append(fill)
         events.append(
             Event("FILL", buy_time, fill=fill, cash_after=self.cash)
         )
@@ -152,7 +183,7 @@ class BacktestEngine:
     def _create_order(self, side: str, bar: Mapping[str, object], timestamp: datetime) -> Order:
         price = Decimal(str(bar["open"]))
         self._order_id += 1
-        return Order(
+        order = Order(
             id=f"order-{self._order_id}",
             symbol=self.instrument.symbol,
             side=side,
@@ -160,6 +191,8 @@ class BacktestEngine:
             limit_price=price,
             created_at=timestamp,
         )
+        self._orders.append(order)
+        return order
 
     def _validate_order(self, order: Order, bar: Mapping[str, object]) -> list[Rejection]:
         market = MarketSnapshot(
@@ -215,6 +248,7 @@ class BacktestEngine:
             order.id, "sell", fill_price, self.config.buy_quantity,
             commission + tax, timestamp,
         )
+        self._fills.append(fill)
         events.append(Event("FILL", timestamp, fill=fill, cash_after=self.cash))
         return events
 
