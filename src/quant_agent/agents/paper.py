@@ -155,7 +155,7 @@ class SimulatedPaperExecution:
         if not isinstance(market, Mapping):
             raise ValueError("strategy config requires a market snapshot mapping")
         universe = self._universe(config)
-        orders = []
+        orders: list[Mapping[str, object]] = []
         for symbol in universe:
             if symbol not in market:
                 raise ValueError(
@@ -206,7 +206,7 @@ class SimulatedPaperExecution:
             position.unsettled_buy_qty = 0
 
     def sell_all(self, timestamp: datetime) -> list[Mapping[str, object]]:
-        orders = []
+        orders: list[Mapping[str, object]] = []
         for symbol in sorted(self.positions):
             position = self.positions[symbol]
             if position.settled_qty <= 0:
