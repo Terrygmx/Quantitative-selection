@@ -66,3 +66,27 @@ def test_invalid_structured_output_is_rejected(gateway):
 
     with pytest.raises(ValueError, match="structured output"):
         gateway.validate_output({"unrecognized": True})
+
+
+def test_structured_output_requires_schema_fields_and_types():
+    gateway = AgentGateway(allowed_tools={"read_dataset"})
+    valid = {
+        "summary": "review complete",
+        "findings": [{"code": "DATA_GAP", "severity": "warn"}],
+        "artifacts": [],
+    }
+
+    gateway.validate_output(valid, schema={
+        "type": "object",
+        "required": ["summary", "findings", "artifacts"],
+        "properties": {
+            "summary": {"type": "string"},
+            "findings": {"type": "array"},
+            "artifacts": {"type": "array"},
+        },
+    })
+
+    with pytest.raises(ValueError, match="type"):
+        gateway.validate_output({**valid, "summary": 1}, schema={"type": "object", "required": ["summary"], "properties": {"summary": {"type": "string"}}})
+    with pytest.raises(ValueError, match="required"):
+        gateway.validate_output({"findings": []}, schema={"type": "object", "required": ["summary"], "properties": {"summary": {"type": "string"}}})

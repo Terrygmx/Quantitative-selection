@@ -38,7 +38,7 @@
 
 ## M7 Agent 与模拟盘
 
-- [ ] `validate_output` 目前仅检查 `summary`，需替换为显式 JSON Schema。
+- [ ] `validate_output` 已支持显式 object schema 的 required/type 校验；仍需完整 JSON Schema Draft 2020-12 实现或显式引入并锁定 jsonschema 依赖。
 - [ ] Agent 请求、工具调用、输出与 `RunManifest` 绑定，形成不可变审计事件。
 - [ ] 增加模拟盘调度、dry-run 命令与人工批准记录。
 

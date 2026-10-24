@@ -53,6 +53,36 @@ class AgentGateway:
             output={**request.arguments, "mode": "read-only"},
         )
 
-    def validate_output(self, output: Mapping[str, Any] | None) -> None:
-        if not isinstance(output, Mapping) or "summary" not in output:
-            raise ValueError("structured output with summary is required")
+    def validate_output(
+        self,
+        output: Mapping[str, Any] | None,
+        schema: Mapping[str, Any] | None = None,
+    ) -> None:
+        if schema is None:
+            if not isinstance(output, Mapping) or "summary" not in output:
+                raise ValueError("structured output with summary is required")
+            return
+
+        expected_type = schema.get("type", "object")
+        if expected_type != "object" or not isinstance(output, Mapping):
+            raise ValueError("structured output type must be object")
+        for field in schema.get("required", []):
+            if field not in output:
+                raise ValueError(f"structured output missing required field: {field}")
+        properties = schema.get("properties", {})
+        type_map = {
+            "object": dict,
+            "array": list,
+            "string": str,
+            "number": (int, float),
+            "boolean": bool,
+        }
+        for field, field_schema in properties.items():
+            if field not in output:
+                continue
+            expected = field_schema.get("type")
+            python_type = type_map.get(expected)
+            if python_type and not isinstance(output[field], python_type):
+                raise ValueError(
+                    f"structured output field {field} has invalid type {expected}"
+                )
