@@ -98,6 +98,10 @@ def find_westock_cli(explicit=None):
     p = which("westock-data")
     if p:
         return p
+    # 新版统一 CLI（westock）：数据子命令同名兼容
+    p = which("westock")
+    if p:
+        return p
     # 常见缓存路径（专家插件自带脚本）
     candidates = [
         r"C:/Users/terry/.workbuddy/plugins/cache/experts/strategy-backtest-expert/1.0.0/skills/westock-data/scripts/index.js",
@@ -143,6 +147,10 @@ def find_westock_tool_cli(explicit=None):
         return env
     from shutil import which
     p = which("westock-tool")
+    if p:
+        return p
+    # 新版统一 CLI（westock）：初筛子命令 screen condition
+    p = which("westock")
     if p:
         return p
     candidates = [
@@ -770,7 +778,8 @@ def load_universe(codes, universe_file):
     if universe_file:
         with open(universe_file, "r", encoding="utf-8") as f:
             codes = [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
-    codes = [c.strip() for c in codes.split(",") if c.strip()]
+    elif codes:
+        codes = [c.strip() for c in codes.split(",") if c.strip()]
     return codes
 
 
@@ -865,8 +874,17 @@ def fetch_industry_change_map(cli, industry_names, ind_map, cache_dir):
 
 
 def run_screen_pipeline(tool_cli, expr, limit, cache_dir):
-    """调用 westock-tool filter 初筛，返回代码列表。"""
-    txt = run_westock_tool(tool_cli, "filter", expr, "--limit", str(limit), cache_dir=cache_dir, tag="screen")
+    """调用初筛 CLI，返回代码列表。
+
+    兼容两代 CLI：
+    - 旧 westock-tool：`filter <expr> --limit N`
+    - 新 westock 统一 CLI：`screen condition --expression <expr> --limit N`
+    """
+    if os.path.basename(tool_cli).startswith("westock-tool"):
+        txt = run_westock_tool(tool_cli, "filter", expr, "--limit", str(limit), cache_dir=cache_dir, tag="screen")
+    else:
+        txt = run_westock_tool(tool_cli, "screen", "condition", "--expression", expr,
+                               "--limit", str(limit), cache_dir=cache_dir, tag="screen")
     codes = parse_screen_codes(txt)
     return codes
 
@@ -1121,7 +1139,7 @@ def main():
     # ① 初筛流水线
     ap.add_argument("--screen", action="store_true", help="先跑 westock-tool 初筛，再对候选做扫描")
     ap.add_argument("--screen-expr", default="",
-                    help="初筛表达式（默认：流动性好且当日涨幅2%~7%、换手率1%~12%的A股）")
+                    help="初筛表达式（默认：流动性好且当日涨幅2%%~7%%、换手率1%%~12%%的A股）")
     ap.add_argument("--screen-limit", type=int, default=50, help="初筛最多返回数量（默认50）")
     ap.add_argument("--westock-tool-cli", default="", help="westock-tool scripts/index.js 路径")
     # ② 申万行业实时相对强弱

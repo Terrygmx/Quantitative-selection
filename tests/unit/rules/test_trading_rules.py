@@ -1,0 +1,191 @@
+from datetime import date, datetime, timezone
+from decimal import Decimal
+
+import pytest
+
+from quant_agent.domain.models import Instrument, Order
+from quant_agent.rules.trading import Portfolio, Position, TradingRulesPlugin
+
+
+def instrument(**overrides):
+    values = {
+        "symbol": "sh600519",
+        "exchange": "SSE",
+        "board": "MainBoard",
+        "status": "Active",
+        "listing_date": date(2001, 8, 27),
+        "tick": Decimal("0.01"),
+        "lot_size": 100,
+    }
+    values.update(overrides)
+    return Instrument(**values)
+
+
+def order(**overrides):
+    values = {
+        "id": "ord-1",
+        "symbol": "sh600519",
+        "side": "buy",
+        "quantity": 100,
+        "limit_price": Decimal("10.00"),
+        "created_at": datetime(2026, 9, 15, 14, 31, tzinfo=timezone.utc),
+    }
+    values.update(overrides)
+    return Order(**values)
+
+
+def portfolio(symbol="sh600519", settled=0, unsettled=0):
+    return Portfolio({symbol: Position(settled_qty=settled, unsettled_buy_qty=unsettled)})
+
+
+@pytest.mark.parametrize(
+    ("instrument", "day", "expected"),
+    [
+        (instrument(), date(2024, 6, 3), (Decimal("9.00"), Decimal("11.00"))),
+        (
+            instrument(board="ChiNext", listing_date=date(2010, 6, 1)),
+            date(2020, 8, 21),
+            (Decimal("9.00"), Decimal("11.00")),
+        ),
+        (
+            instrument(board="ChiNext", listing_date=date(2010, 6, 1)),
+            date(2020, 8, 24),
+            (Decimal("8.00"), Decimal("12.00")),
+        ),
+        (
+            instrument(board="STAR", listing_date=date(2019, 7, 22)),
+            date(2024, 6, 3),
+            (Decimal("8.00"), Decimal("12.00")),
+        ),
+    ],
+)
+def test_price_limits_are_board_and_date_effective(instrument, day, expected):
+    band = TradingRulesPlugin().price_limits(instrument, Decimal("10.00"), day)
+
+    assert (band.floor, band.ceiling) == expected
+
+
+@pytest.mark.parametrize(
+    "instrument",
+    [
+        instrument(board="STAR", listing_date=date(2024, 1, 2)),
+        instrument(exchange="SZSE", board="ChiNext", listing_date=date(2024, 1, 2)),
+    ],
+)
+def test_new_star_and_chinext_listing_has_no_price_limit_for_first_5_trading_days(instrument):
+    rules = TradingRulesPlugin()
+
+    assert rules.price_limits(instrument, Decimal("10.00"), date(2024, 1, 2)) is None
+    assert rules.price_limits(instrument, Decimal("10.00"), date(2024, 1, 5)) is None
+    assert rules.price_limits(instrument, Decimal("10.00"), date(2024, 1, 8)) is None
+
+    band = rules.price_limits(instrument, Decimal("10.00"), date(2024, 1, 9))
+    assert band is not None
+    assert band.floor == Decimal("8.00")
+    assert band.ceiling == Decimal("12.00")
+
+
+def test_same_day_sell_is_rejected_for_t_plus_one():
+    rejections = TradingRulesPlugin().validate_order(
+        order(side="sell", limit_price=Decimal("10.00")),
+        portfolio(settled=0, unsettled=100),
+        {
+            "sh600519": {
+                "last": Decimal("11.00"),
+                "previous_close": Decimal("10.00"),
+                "instrument": instrument(),
+            }
+        },
+    )
+
+    assert [r.code for r in rejections] == ["T1_UNSETTLED"]
+
+
+def test_buy_and_settled_sell_are_lot_valid():
+    rules = TradingRulesPlugin()
+    market = {
+        "sh600519": {
+                "last": Decimal("11.00"),
+            "previous_close": Decimal("10.00"),
+            "instrument": instrument(),
+        }
+    }
+
+    assert rules.validate_order(order(), portfolio(), market) == []
+    assert (
+        rules.validate_order(
+            order(side="sell"), portfolio(settled=100), market
+        )
+        == []
+    )
+
+    with pytest.raises(ValueError, match="lot"):
+        order(quantity=150)
+
+
+def test_suspended_limit_board_and_price_band_reject_orders():
+    rules = TradingRulesPlugin()
+    market = {
+        "sh600519": {
+            "last": Decimal("11.00"),
+            "previous_close": Decimal("10.00"),
+            "instrument": instrument(),
+        }
+    }
+
+    suspended = rules.validate_order(
+        order(), portfolio(), {**market, "sh600519": {**market["sh600519"], "tradable": False}}
+    )
+    assert [r.code for r in suspended] == ["SUSPENDED"]
+
+    limit_up = rules.validate_order(
+        order(side="buy", limit_price=Decimal("11.00")),
+        portfolio(),
+        market,
+    )
+    assert [r.code for r in limit_up] == ["LIMIT_UP"]
+
+    unlocked_market = {**market, "sh600519": {**market["sh600519"], "last": Decimal("10.00")}}
+    outside_band = rules.validate_order(
+        order(limit_price=Decimal("11.01")), portfolio(), unlocked_market
+    )
+    assert [r.code for r in outside_band] == ["PRICE_BAND"]
+
+
+def test_invalid_fill_price_is_rejected():
+    rules = TradingRulesPlugin()
+
+    assert rules.validate_fill_price(instrument(), Decimal("10.00"), Decimal("10.01"), date(2024, 6, 3))
+    assert not rules.validate_fill_price(instrument(), Decimal("10.00"), Decimal("11.01"), date(2024, 6, 3))
+    assert not rules.validate_fill_price(
+        instrument(status="Suspended"), Decimal("10.00"), Decimal("10.01"), date(2024, 6, 3)
+    )
+
+
+def test_order_execution_conserves_cash_and_position():
+    rules = TradingRulesPlugin()
+    instrument_item = instrument()
+    market = {
+        "sh600519": {
+            "last": Decimal("10.00"),
+            "previous_close": Decimal("10.00"),
+            "instrument": instrument_item,
+        }
+    }
+    cash = Decimal("10000.00")
+    position = Position()
+    quantity = 100
+
+    buy = order(quantity=quantity, limit_price=Decimal("10.00"))
+    assert rules.validate_order(buy, Portfolio({"sh600519": position}), market) == []
+    cash -= buy.limit_price * quantity
+    position = Position(unsettled_buy_qty=position.unsettled_buy_qty + quantity)
+
+    sell = order(side="sell", quantity=quantity, limit_price=Decimal("10.00"))
+    settled_portfolio = Portfolio({"sh600519": Position(settled_qty=quantity)})
+    assert rules.validate_order(sell, settled_portfolio, market) == []
+    cash += sell.limit_price * quantity
+    position = Position(settled_qty=position.settled_qty)
+
+    assert cash == Decimal("10000.00")
+    assert position.settled_qty >= 0

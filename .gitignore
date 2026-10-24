@@ -43,3 +43,6 @@ desktop.ini
 *.temp
 *.log
 ~$*
+# Local agent and index state
+.codegraph/
+.pi-loop.json.lock
