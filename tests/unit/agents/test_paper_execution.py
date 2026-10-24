@@ -289,3 +289,34 @@ def test_simulated_execution_rejects_unparseable_snapshot_price():
     assert orders[0]["status"] == "REJECTED"
     assert orders[0]["reason_code"] == "INVALID_PRICE"
     assert paper.cash == Decimal("100000.00")
+
+
+def test_simulated_execution_requires_universe():
+    paper = execution()
+
+    with pytest.raises(ValueError, match="universe"):
+        paper.execute(
+            "tail_momentum_overnight",
+            {"config_hash": "hash-1", "market": {"sh600176": {"last": "10.05"}}},
+            RUN_AT,
+        )
+
+
+def test_simulated_execution_rejects_sell_while_suspended():
+    paper = execution()
+    paper.execute(
+        "tail_momentum_overnight", market_config(last="10.05"), RUN_AT
+    )
+    paper.settle()
+    # The stock is suspended and we never observe it resume trading, so the
+    # sell must not assume tradability.
+    suspended = market_config(last="10.05")
+    suspended["market"]["sh600176"]["tradable"] = False
+    paper.execute("tail_momentum_overnight", suspended, RUN_AT)
+    paper.settle()
+
+    orders = paper.sell_all(datetime(2026, 10, 27, 9, 31, tzinfo=CN_TZ))
+
+    assert orders[0]["status"] == "REJECTED"
+    assert orders[0]["reason_code"] == "SUSPENDED"
+    assert paper.position("sh600176").settled_qty == 100

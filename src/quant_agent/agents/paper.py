@@ -142,6 +142,7 @@ class SimulatedPaperExecution:
         self._order_id = 0
         self._last_prices: dict[str, Decimal] = {}
         self._previous_closes: dict[str, Decimal] = {}
+        self._tradable: dict[str, bool] = {}
 
     def execute(
         self,
@@ -153,7 +154,7 @@ class SimulatedPaperExecution:
         market = config.get("market")
         if not isinstance(market, Mapping):
             raise ValueError("strategy config requires a market snapshot mapping")
-        universe = self._universe(config, market)
+        universe = self._universe(config)
         orders = []
         for symbol in universe:
             if symbol not in market:
@@ -164,13 +165,17 @@ class SimulatedPaperExecution:
             if instrument is None:
                 raise ValueError(f"{symbol} instrument metadata is required")
             snapshot_data = market[symbol]
+            is_mapping = isinstance(snapshot_data, Mapping)
+            # A suspension observed on any snapshot blocks sells until the
+            # instrument is seen tradable again.
+            self._tradable[symbol] = self._tradable.get(symbol, True) and (
+                bool(snapshot_data.get("tradable", True)) if is_mapping else True
+            )
             last = _parse_price(
-                snapshot_data.get("last") if isinstance(snapshot_data, Mapping) else None
+                snapshot_data.get("last") if is_mapping else None
             )
             previous_close = _parse_price(
-                snapshot_data.get("previous_close")
-                if isinstance(snapshot_data, Mapping)
-                else None
+                snapshot_data.get("previous_close") if is_mapping else None
             )
             self._last_prices[symbol] = last
             self._previous_closes[symbol] = (
@@ -183,14 +188,14 @@ class SimulatedPaperExecution:
 
     @staticmethod
     def _universe(
-        config: Mapping[str, object], market: Mapping[str, object]
+        config: Mapping[str, object],
     ) -> list[str]:
         """Only configured universe symbols may trade; the snapshot may carry
         extra reference data that is never an order target."""
         raw = config.get("universe")
-        if isinstance(raw, list) and raw:
-            return [str(symbol) for symbol in raw]
-        return [str(symbol) for symbol in market]
+        if not isinstance(raw, list) or not raw:
+            raise ValueError("strategy config requires a non-empty universe")
+        return [str(symbol) for symbol in raw]
 
     def position(self, symbol: str) -> PaperPosition:
         return self.positions.setdefault(symbol, PaperPosition())
@@ -249,7 +254,7 @@ class SimulatedPaperExecution:
             "previous_close": str(
                 self._previous_closes.get(instrument.symbol, last)
             ),
-            "tradable": True,
+            "tradable": self._tradable.get(instrument.symbol, True),
         }
         market = self._market_snapshot(instrument, snapshot)
         fill_price = self._tick_price(
