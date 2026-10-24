@@ -12,7 +12,19 @@ class BacktestMetrics:
     equity_curve: tuple[Decimal, ...] | list[Decimal]
     fills: tuple[Mapping[str, object], ...] | list[Mapping[str, object]]
 
-    def summary(self) -> dict[str, float | int]:
+    _FREQUENCIES = {252: "daily", 52: "weekly", 12: "monthly"}
+
+    def summary(self, periods_per_year: int | None = None) -> dict[str, float | int]:
+        if periods_per_year is None:
+            periods_per_year = 1
+            frequency = "sample"
+        else:
+            if periods_per_year not in self._FREQUENCIES:
+                frequencies = ", ".join(str(item) for item in sorted(self._FREQUENCIES))
+                raise ValueError(
+                    f"unsupported sample frequency: {periods_per_year}; expected one of {frequencies}"
+                )
+            frequency = self._FREQUENCIES[periods_per_year]
         total_return = float((self.final_equity - self.initial_cash) / self.initial_cash)
         peak = self.equity_curve[0]
         max_drawdown = 0.0
@@ -51,7 +63,8 @@ class BacktestMetrics:
         return {
             "total_return": total_return,
             "max_drawdown": max_drawdown,
-            "sharpe": sharpe,
+            "sharpe": sharpe * periods_per_year**0.5,
+            "sample_frequency": frequency,
             "win_rate": win_rate,
             "turnover": turnover,
             "fill_count": len(self.fills),

@@ -39,3 +39,16 @@ def test_win_rate_turnover_and_fill_report(metrics):
     assert report["win_rate"] == pytest.approx(0.5)
     assert report["turnover"] == pytest.approx(0.4)
     assert report["fill_count"] == 4
+
+
+def test_sharpe_is_annualized_for_declared_sample_frequency(metrics):
+    report = metrics.summary(periods_per_year=252)
+
+    base = metrics.summary()
+    assert report["sharpe"] == pytest.approx(base["sharpe"] * 252**0.5)
+    assert report["sample_frequency"] == "daily"
+
+
+def test_sharpe_frequency_must_be_supported(metrics):
+    with pytest.raises(ValueError, match="frequency"):
+        metrics.summary(periods_per_year=13)
