@@ -19,6 +19,7 @@ class IndustryConstraint:
 class LiquidityConstraint:
     max_participation: float
     daily_volume: int
+    portfolio_value: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,8 +110,9 @@ class SignalComposer:
                 ) > constraint.max_weight:
                     status, reason = "rejected", "INDUSTRY_LIMIT"
                 elif isinstance(constraint, LiquidityConstraint):
-                    participation_capacity = constraint.max_participation
-                    if abs(target.net_weight) > participation_capacity:
+                    target_amount = abs(target.net_weight) * constraint.portfolio_value
+                    capacity = constraint.daily_volume * constraint.max_participation
+                    if target_amount > capacity:
                         status, reason = "rejected", "LIQUIDITY_LIMIT"
                 elif isinstance(constraint, DrawdownFuse) and (
                     constraint.current_drawdown >= constraint.max_drawdown

@@ -68,7 +68,9 @@ def test_industry_constraint_rejects_excess_industry_exposure():
 
 def test_liquidity_constraint_rejects_illiquid_target():
     result = composer(
-        LiquidityConstraint(max_participation=0.1, daily_volume=100000)
+        LiquidityConstraint(
+            max_participation=0.1, daily_volume=100000, portfolio_value=100000
+        )
     ).compose([signal(weight=0.2)])
 
     # A 20% target of a 100k-volume security cannot participate more than 10%.
@@ -90,3 +92,29 @@ def test_blacklist_rejects_symbol():
 
     assert result.targets[0].status == "rejected"
     assert result.targets[0].reason_code == "BLACKLIST"
+
+
+def test_liquidity_constraint_uses_target_amount_and_daily_capacity():
+    # 20% of 100000 portfolio = 20000 target, but capacity is 10000.
+    result = composer(
+        LiquidityConstraint(
+            max_participation=0.1,
+            daily_volume=100000,
+            portfolio_value=100000,
+        )
+    ).compose([signal(weight=0.2)])
+
+    assert result.targets[0].status == "rejected"
+    assert result.targets[0].reason_code == "LIQUIDITY_LIMIT"
+
+
+def test_liquidity_constraint_accepts_target_within_capacity():
+    result = composer(
+        LiquidityConstraint(
+            max_participation=0.1,
+            daily_volume=1_000_000,
+            portfolio_value=100_000,
+        )
+    ).compose([signal(weight=0.05)])
+
+    assert result.targets[0].status == "accepted"
