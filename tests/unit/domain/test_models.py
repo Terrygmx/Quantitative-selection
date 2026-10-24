@@ -74,7 +74,7 @@ def test_order_rejects_non_lot_quantity():
     data = order.to_dict()
     data["quantity"] = 101
     with pytest.raises(ValueError, match="lot"):
-        Order.from_dict(data)
+        Order.from_dict(data).validate_quantity(instrument())
 
 
 def test_run_manifest_hash_is_deterministic_and_content_addressed():
@@ -138,3 +138,40 @@ def test_signal_and_order_accept_decimal_serialized_numbers():
 
     assert order.quantity == 100
     assert str(order.limit_price) == "1800.00"
+
+
+def test_order_validate_quantity_uses_instrument_lot_and_allows_odd_sell_remainder():
+    buy = Order(
+        id="ord-buy",
+        symbol="sh600519",
+        side="buy",
+        quantity=200,
+        limit_price="10.00",
+        created_at=datetime(2026, 9, 15, 14, 31, tzinfo=timezone.utc),
+    )
+    odd_sell = Order(
+        id="ord-sell",
+        symbol="sh600519",
+        side="sell",
+        quantity=135,
+        limit_price="10.00",
+        created_at=datetime(2026, 9, 15, 14, 31, tzinfo=timezone.utc),
+    )
+    instrument_100 = instrument()
+    instrument_200 = instrument(lot_size=200)
+    invalid_200_lot = Order(
+        id="ord-invalid",
+        symbol="sh600519",
+        side="buy",
+        quantity=300,
+        limit_price="10.00",
+        created_at=datetime(2026, 9, 15, 14, 31, tzinfo=timezone.utc),
+    )
+
+    assert buy.validate_quantity(instrument_100) is None
+    assert odd_sell.validate_quantity(instrument_100, allow_odd_lot=True) is None
+
+    with pytest.raises(ValueError, match="lot size 200"):
+        invalid_200_lot.validate_quantity(instrument_200)
+    with pytest.raises(ValueError, match="multiple of"):
+        odd_sell.validate_quantity(instrument_100)

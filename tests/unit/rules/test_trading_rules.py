@@ -119,8 +119,8 @@ def test_buy_and_settled_sell_are_lot_valid():
         == []
     )
 
-    with pytest.raises(ValueError, match="lot"):
-        order(quantity=150)
+    invalid = rules.validate_order(order(quantity=150), portfolio(), market)
+    assert [item.code for item in invalid] == ["INVALID_LOT"]
 
 
 def test_suspended_limit_board_and_price_band_reject_orders():

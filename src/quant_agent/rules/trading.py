@@ -95,6 +95,12 @@ class TradingRulesPlugin:
         instrument = snapshot.get("instrument")
         if not isinstance(instrument, Instrument):
             return [Rejection("MARKET_DATA_MISSING", "instrument metadata is required")]
+        try:
+            order.validate_quantity(
+                instrument, allow_odd_lot=order.side == "sell"
+            )
+        except ValueError as exc:
+            return [Rejection("INVALID_LOT", str(exc))]
         previous_close = snapshot.get("previous_close")
         if previous_close is None:
             return [Rejection("MARKET_DATA_MISSING", "previous close is required")]

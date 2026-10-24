@@ -128,8 +128,8 @@ class Order:
         if self.side not in ("buy", "sell"):
             raise ValueError("side must be buy or sell")
         object.__setattr__(self, "limit_price", _parse_decimal(self.limit_price))
-        if self.quantity <= 0 or self.quantity % 100 != 0:
-            raise ValueError("quantity must be a positive multiple of lot size 100")
+        if self.quantity <= 0:
+            raise ValueError("quantity must be positive")
         if self.limit_price <= 0:
             raise ValueError("limit_price must be positive")
 
@@ -150,6 +150,14 @@ class Order:
             limit_price=Decimal(data["limit_price"]),
             created_at=_parse_datetime(data["created_at"]),
         )
+
+    def validate_quantity(self, instrument: Instrument, allow_odd_lot: bool = False) -> None:
+        if self.quantity % instrument.lot_size and not (allow_odd_lot and self.side == "sell"):
+            raise ValueError(
+                f"quantity must be a multiple of lot size {instrument.lot_size}"
+            )
+        if allow_odd_lot and self.side != "sell":
+            raise ValueError("odd lot sells are the only permitted odd-lot orders")
 
 
 def _canonical_json(data: Mapping[str, Any]) -> bytes:
