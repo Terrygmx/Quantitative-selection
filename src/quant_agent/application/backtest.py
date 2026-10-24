@@ -55,6 +55,12 @@ class MultiInstrumentEvent:
     fill: FillRecord | None = None
 
 
+@dataclass
+class MultiPosition:
+    settled_qty: int = 0
+    unsettled_buy_qty: int = 0
+
+
 MultiBars = Mapping[str, list[Mapping[str, object]]]
 MultiInstruments = Mapping[str, Instrument]
 
@@ -287,6 +293,9 @@ class MultiInstrumentBacktestEngine:
         self.rules = rules
         self.cash = config.initial_cash
         self.order_states = OrderStateMachine()
+        self.positions: dict[str, MultiPosition] = {
+            symbol: MultiPosition() for symbol in bars
+        }
         self._orders: list[Order] = []
         self._fills: list[FillRecord] = []
 
@@ -303,7 +312,13 @@ class MultiInstrumentBacktestEngine:
                 event = self._trade_symbol(symbol, bar, session_open)
                 events.extend(event)
             events.append(MultiInstrumentEvent("SESSION_CLOSE", session_open))
+            for position in self.positions.values():
+                position.settled_qty += position.unsettled_buy_qty
+                position.unsettled_buy_qty = 0
         return events
+
+    def position(self, symbol: str) -> MultiPosition:
+        return self.positions[symbol]
 
     def _trade_symbol(
         self, symbol: str, bar: Mapping[str, object], timestamp: datetime
@@ -328,6 +343,11 @@ class MultiInstrumentBacktestEngine:
         )
         portfolio = RulesPortfolio({})
         rejections = self.rules.validate_order(order, portfolio, snapshot)
+        gross = Decimal(str(bar["open"])) * order.quantity
+        fee = gross * self.config.commission_rate
+        if gross + fee > self.cash:
+            self.order_states.reject(order.id, "INSUFFICIENT_CASH", timestamp)
+            return events
         if rejections:
             self.order_states.reject(order.id, rejections[0].code, timestamp)
             return events
@@ -335,6 +355,7 @@ class MultiInstrumentBacktestEngine:
         gross = fill_price * order.quantity
         fee = gross * self.config.commission_rate
         self.cash -= gross + fee
+        self.positions[symbol].unsettled_buy_qty += order.quantity
         self.order_states.fill(order.id, timestamp)
         fill = FillRecord(order.id, "buy", fill_price, order.quantity, fee, timestamp)
         self._fills.append(fill)
@@ -349,3 +370,60 @@ class MultiInstrumentBacktestEngine:
             if isinstance(item.get("date"), date)
         }
         return sorted(dates)
+
+    def sell_settled(self, timestamp: datetime) -> list[MultiInstrumentEvent]:
+        events: list[MultiInstrumentEvent] = []
+        for symbol in sorted(self.bars):
+            position = self.positions[symbol]
+            if position.settled_qty <= 0:
+                continue
+            latest_bar = self._latest_bar_on_or_before(symbol, timestamp.date())
+            if latest_bar is None:
+                continue
+            events.extend(self._sell_symbol(symbol, latest_bar, timestamp))
+        return events
+
+    def _sell_symbol(
+        self, symbol: str, bar: Mapping[str, object], timestamp: datetime
+    ) -> list[MultiInstrumentEvent]:
+        instrument = self.instruments[symbol]
+        quantity = self.positions[symbol].settled_qty
+        order = Order(
+            id=f"order-{symbol}-{len(self._orders) + 1}",
+            symbol=symbol,
+            side="sell",
+            quantity=quantity,
+            limit_price=Decimal(str(bar["open"])),
+            created_at=timestamp,
+        )
+        self._orders.append(order)
+        self.order_states.submit(PendingOrder(order.id, order.created_at))
+        events = [MultiInstrumentEvent("ORDER", timestamp, order=order)]
+        snapshot = MarketSnapshot(
+            instrument=instrument,
+            last=Decimal(str(bar["open"])),
+            previous_close=Decimal(str(bar["previous_close"])),
+            tradable=instrument.status == "Active",
+        )
+        portfolio = RulesPortfolio(
+            {symbol: RulesPosition(settled_qty=self.positions[symbol].settled_qty)}
+        )
+        rejections = self.rules.validate_order(order, portfolio, snapshot)
+        if rejections:
+            self.order_states.reject(order.id, rejections[0].code, timestamp)
+            return events
+        fill_price = Decimal(str(bar["open"])) * (1 - self.config.slippage_rate)
+        gross = fill_price * quantity
+        commission = gross * self.config.commission_rate
+        tax = gross * self.config.stamp_tax_rate
+        self.cash += gross - commission - tax
+        self.positions[symbol].settled_qty -= quantity
+        self.order_states.fill(order.id, timestamp)
+        fill = FillRecord(order.id, "sell", fill_price, quantity, commission + tax, timestamp)
+        self._fills.append(fill)
+        events.append(MultiInstrumentEvent("FILL", timestamp, fill=fill))
+        return events
+
+    def _latest_bar_on_or_before(self, symbol: str, day: date) -> Mapping[str, object] | None:
+        eligible = [item for item in self.bars[symbol] if item["date"] <= day]
+        return eligible[-1] if eligible else None
