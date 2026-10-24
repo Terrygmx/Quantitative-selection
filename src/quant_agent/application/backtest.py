@@ -224,7 +224,7 @@ class BacktestEngine:
         snapshot = MarketSnapshot(
             instrument=self.instrument,
             last=open_price,
-            previous_close=self.bars[-1].get("close", open_price)
+            previous_close=Decimal(str(self.bars[-1].get("close", open_price)))
             if self.bars
             else open_price,
             tradable=self.instrument.status == "Active",

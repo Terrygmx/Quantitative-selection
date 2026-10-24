@@ -6,7 +6,7 @@ import pytest
 
 from quant_agent.domain.models import Instrument, Order
 from quant_agent.rules.calendar import StaticTradingCalendar
-from quant_agent.rules.trading import Portfolio, Position, TradingRulesPlugin
+from quant_agent.rules.trading import MarketSnapshot, Portfolio, Position, TradingRulesPlugin
 
 
 CN_TZ = ZoneInfo("Asia/Shanghai")
@@ -41,6 +41,15 @@ def order(**overrides):
 
 def portfolio(symbol="sh600519", settled=0, unsettled=0):
     return Portfolio({symbol: Position(settled_qty=settled, unsettled_buy_qty=unsettled)})
+
+def snapshot(item=None, **overrides):
+    values = {
+        "instrument": item or instrument(),
+        "last": Decimal("11.00"),
+        "previous_close": Decimal("10.00"),
+    }
+    values.update(overrides)
+    return MarketSnapshot(**values)
 
 
 @pytest.mark.parametrize(
@@ -94,13 +103,7 @@ def test_same_day_sell_is_rejected_for_t_plus_one():
     rejections = TradingRulesPlugin().validate_order(
         order(side="sell", limit_price=Decimal("10.00")),
         portfolio(settled=0, unsettled=100),
-        {
-            "sh600519": {
-                "last": Decimal("11.00"),
-                "previous_close": Decimal("10.00"),
-                "instrument": instrument(),
-            }
-        },
+        snapshot(),
     )
 
     assert [r.code for r in rejections] == ["T1_UNSETTLED"]
@@ -108,13 +111,7 @@ def test_same_day_sell_is_rejected_for_t_plus_one():
 
 def test_buy_and_settled_sell_are_lot_valid():
     rules = TradingRulesPlugin()
-    market = {
-        "sh600519": {
-                "last": Decimal("11.00"),
-            "previous_close": Decimal("10.00"),
-            "instrument": instrument(),
-        }
-    }
+    market = snapshot()
 
     assert rules.validate_order(order(), portfolio(), market) == []
     assert (
@@ -130,16 +127,17 @@ def test_buy_and_settled_sell_are_lot_valid():
 
 def test_suspended_limit_board_and_price_band_reject_orders():
     rules = TradingRulesPlugin()
-    market = {
-        "sh600519": {
-            "last": Decimal("11.00"),
-            "previous_close": Decimal("10.00"),
-            "instrument": instrument(),
-        }
-    }
+    market = snapshot()
 
     suspended = rules.validate_order(
-        order(), portfolio(), {**market, "sh600519": {**market["sh600519"], "tradable": False}}
+        order(),
+        portfolio(),
+        MarketSnapshot(
+            instrument=market.instrument,
+            last=market.last,
+            previous_close=market.previous_close,
+            tradable=False,
+        ),
     )
     assert [r.code for r in suspended] == ["SUSPENDED"]
 
@@ -150,7 +148,11 @@ def test_suspended_limit_board_and_price_band_reject_orders():
     )
     assert [r.code for r in limit_up] == ["LIMIT_UP"]
 
-    unlocked_market = {**market, "sh600519": {**market["sh600519"], "last": Decimal("10.00")}}
+    unlocked_market = MarketSnapshot(
+        instrument=market.instrument,
+        last=Decimal("10.00"),
+        previous_close=market.previous_close,
+    )
     outside_band = rules.validate_order(
         order(limit_price=Decimal("11.01")), portfolio(), unlocked_market
     )
@@ -170,13 +172,7 @@ def test_invalid_fill_price_is_rejected():
 def test_order_execution_conserves_cash_and_position():
     rules = TradingRulesPlugin()
     instrument_item = instrument()
-    market = {
-        "sh600519": {
-            "last": Decimal("10.00"),
-            "previous_close": Decimal("10.00"),
-            "instrument": instrument_item,
-        }
-    }
+    market = snapshot(instrument_item, last=Decimal("10.00"))
     cash = Decimal("10000.00")
     position = Position()
     quantity = 100
@@ -224,17 +220,15 @@ def test_order_price_must_follow_tick(price, valid):
 
 
 def test_market_snapshot_model_replaces_implicit_mapping():
-    from quant_agent.rules.trading import MarketSnapshot
-
-    snapshot = MarketSnapshot(
+    item = MarketSnapshot(
         instrument=instrument(),
         last=Decimal("10.00"),
         previous_close=Decimal("10.00"),
         tradable=True,
     )
 
-    assert snapshot.instrument.symbol == "sh600519"
-    assert TradingRulesPlugin().validate_order(order(), portfolio(), snapshot) == []
+    assert item.instrument.symbol == "sh600519"
+    assert TradingRulesPlugin().validate_order(order(), portfolio(), item) == []
 
 
 @pytest.mark.parametrize(
@@ -296,3 +290,18 @@ def test_order_rejection_matrix_includes_board_tick_sizes():
 
     assert [item.code for item in invalid_star] == ["INVALID_TICK"]
     assert valid_main == []
+
+
+def test_validate_order_rejects_legacy_market_mapping():
+    with pytest.raises(TypeError, match="MarketSnapshot"):
+        TradingRulesPlugin().validate_order(
+            order(),
+            portfolio(),
+            {
+                "sh600519": {
+                    "last": Decimal("10.00"),
+                    "previous_close": Decimal("10.00"),
+                    "instrument": instrument(),
+                }
+            },
+        )

@@ -113,24 +113,14 @@ class TradingRulesPlugin:
         self,
         order: Order,
         portfolio: Portfolio,
-        market: Mapping[str, Mapping[str, object]] | MarketSnapshot,
+        market: MarketSnapshot,
     ) -> list[Rejection]:
-        if isinstance(market, MarketSnapshot):
-            snapshot: Mapping[str, object] = {
-                "instrument": market.instrument,
-                "last": market.last,
-                "previous_close": market.previous_close,
-                "tradable": market.tradable,
-            }
-        else:
-            snapshot = market.get(order.symbol, {})
-        tradeability = self.tradeability(
-            self._instrument_from_snapshot(snapshot, order.symbol),
-            order.created_at,
-        )
+        if not isinstance(market, MarketSnapshot):
+            raise TypeError("market must be a MarketSnapshot")
+        tradeability = self.tradeability(market.instrument, order.created_at)
         if not tradeability.tradable:
             return [Rejection(tradeability.reason_code or "NOT_TRADABLE", "")]
-        if snapshot.get("tradable") is False:
+        if market.tradable is False:
             return [Rejection("SUSPENDED", "instrument is not tradable")]
 
         if order.side == "sell":
@@ -138,9 +128,7 @@ class TradingRulesPlugin:
             if order.quantity > position.settled_qty:
                 return [Rejection("T1_UNSETTLED", "same-day bought quantity is not sellable")]
 
-        instrument = self._instrument_from_snapshot(snapshot, order.symbol)
-        if instrument is None:
-            return [Rejection("MARKET_DATA_MISSING", "instrument metadata is required")]
+        instrument = market.instrument
         try:
             order.validate_quantity(
                 instrument, allow_odd_lot=order.side == "sell"
@@ -149,33 +137,24 @@ class TradingRulesPlugin:
             return [Rejection("INVALID_LOT", str(exc))]
         if not self.valid_price(instrument, order.limit_price):
             return [Rejection("INVALID_TICK", "limit price must follow instrument tick")]
-        previous_close = snapshot.get("previous_close")
-        if previous_close is None:
-            return [Rejection("MARKET_DATA_MISSING", "previous close is required")]
         band = self.price_limits(
             instrument,
-            Decimal(str(previous_close)),
+            market.previous_close,
             order.created_at.date(),
         )
         if order.limit_price > band.ceiling:
-            if snapshot.get("last") == band.ceiling:
+            if market.last == band.ceiling:
                 return [Rejection("LIMIT_UP", "order cannot fill at limit-up price")]
             return [Rejection("PRICE_BAND", "limit price is above the allowed price band")]
         if order.limit_price < band.floor:
-            if snapshot.get("last") == band.floor:
+            if market.last == band.floor:
                 return [Rejection("LIMIT_DOWN", "order cannot fill at limit-down price")]
             return [Rejection("PRICE_BAND", "limit price is below the allowed price band")]
-        if order.limit_price == band.ceiling and snapshot.get("last") == band.ceiling:
+        if order.limit_price == band.ceiling and market.last == band.ceiling:
             return [Rejection("LIMIT_UP", "order cannot fill at limit-up price")]
-        if order.limit_price == band.floor and snapshot.get("last") == band.floor:
+        if order.limit_price == band.floor and market.last == band.floor:
             return [Rejection("LIMIT_DOWN", "order cannot fill at limit-down price")]
         return []
-
-    def _instrument_from_snapshot(
-        self, snapshot: Mapping[str, object], symbol: str
-    ) -> Instrument | None:
-        instrument = snapshot.get("instrument")
-        return instrument if isinstance(instrument, Instrument) else None
 
     def validate_fill_price(
         self,
