@@ -118,3 +118,27 @@ def test_liquidity_constraint_accepts_target_within_capacity():
     ).compose([signal(weight=0.05)])
 
     assert result.targets[0].status == "accepted"
+
+
+def test_total_position_constraint_rejects_excess_exposure():
+    from quant_agent.application.portfolio import TotalPositionConstraint
+
+    signals = [
+        signal(symbol="sh600519", weight=0.6),
+        signal(symbol="sz000858", strategy_id="s2", weight=0.6),
+    ]
+
+    result = composer(TotalPositionConstraint(max_weight=1.0)).compose(signals)
+
+    assert all(target.status == "rejected" for target in result.targets)
+    assert {target.reason_code for target in result.targets} == {"TOTAL_POSITION_LIMIT"}
+
+
+def test_blacklist_only_applies_on_and_after_effective_date():
+    from quant_agent.application.portfolio import BlacklistConstraint
+
+    active = composer(BlacklistConstraint(symbols={"sh600519"}, effective_from="2026-09-15")).compose([signal()])
+    before = composer(BlacklistConstraint(symbols={"sh600519"}, effective_from="2026-09-16")).compose([signal()])
+
+    assert active.targets[0].status == "rejected"
+    assert before.targets[0].status == "accepted"

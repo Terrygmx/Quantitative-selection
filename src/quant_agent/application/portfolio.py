@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from math import copysign
 from typing import Mapping
 
@@ -31,6 +32,12 @@ class DrawdownFuse:
 @dataclass(frozen=True, slots=True)
 class BlacklistConstraint:
     symbols: frozenset[str] | set[str]
+    effective_from: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TotalPositionConstraint:
+    max_weight: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +65,10 @@ class SignalComposer:
         self.config = config
 
     def compose(self, signals: list[Mapping[str, object]]) -> CompositionResult:
+        as_of = max(
+            (datetime.fromisoformat(str(signal["valid_from"])) for signal in signals),
+            default=None,
+        )
         by_symbol: dict[str, dict[str, float]] = {}
         industries: dict[str, str] = {}
         for signal in signals:
@@ -85,6 +96,7 @@ class SignalComposer:
             )
 
         processed: list[TargetPosition] = []
+        total_weight = sum(target.net_weight for target in targets)
         for target in targets:
             status, reason = "accepted", None
             for constraint in self.config.constraints:
@@ -118,10 +130,19 @@ class SignalComposer:
                     constraint.current_drawdown >= constraint.max_drawdown
                 ):
                     status, reason = "rejected", "DRAWDOWN_FUSE"
-                elif isinstance(constraint, BlacklistConstraint) and (
-                    target.symbol in constraint.symbols
-                ):
-                    status, reason = "rejected", "BLACKLIST"
+                elif isinstance(constraint, BlacklistConstraint):
+                    if (
+                        constraint.effective_from
+                        and as_of
+                        and as_of.date() < date.fromisoformat(constraint.effective_from)
+                    ):
+                        continue
+                    if target.symbol in constraint.symbols:
+                        status, reason = "rejected", "BLACKLIST"
+                elif isinstance(constraint, TotalPositionConstraint) and abs(
+                    total_weight
+                ) > constraint.max_weight:
+                    status, reason = "rejected", "TOTAL_POSITION_LIMIT"
             processed.append(
                 TargetPosition(
                     symbol=target.symbol,
