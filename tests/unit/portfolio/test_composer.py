@@ -155,3 +155,30 @@ def test_risk_decisions_are_immutable_audit_records():
     assert decision.reason_code == "SINGLE_POSITION_LIMIT"
     with pytest.raises(AttributeError):
         decision.status = "accepted"
+
+
+def test_correlation_budget_rejects_highly_correlated_strategies():
+    from quant_agent.application.portfolio import CorrelationBudget
+
+    covariances = {
+        ("s1", "s2"): 0.9,
+        ("s1", "s1"): 1.0,
+        ("s2", "s2"): 1.0,
+    }
+    result = composer(CorrelationBudget(max_correlation=0.8, covariances=covariances)).compose(
+        [signal(weight=0.2), signal(strategy_id="s2", symbol="sz000858", industry="Bank", weight=0.2)]
+    )
+
+    assert all(target.status == "rejected" for target in result.targets)
+    assert {target.reason_code for target in result.targets} == {"CORRELATION_BUDGET"}
+
+
+def test_correlation_budget_accepts_uncorrelated_strategies():
+    from quant_agent.application.portfolio import CorrelationBudget
+
+    covariances = {("s1", "s2"): 0.1, ("s1", "s1"): 1.0, ("s2", "s2"): 1.0}
+    result = composer(CorrelationBudget(max_correlation=0.8, covariances=covariances)).compose(
+        [signal(weight=0.2), signal(strategy_id="s2", symbol="sz000858", industry="Bank", weight=0.2)]
+    )
+
+    assert all(target.status == "accepted" for target in result.targets)

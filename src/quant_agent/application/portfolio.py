@@ -41,6 +41,21 @@ class TotalPositionConstraint:
 
 
 @dataclass(frozen=True, slots=True)
+class CorrelationBudget:
+    max_correlation: float
+    covariances: Mapping[tuple[str, str], float]
+
+    def correlation(self, left: str, right: str) -> float | None:
+        pair_variance = self.covariances.get((left, left))
+        other_variance = self.covariances.get((right, right))
+        covariance = self.covariances.get((left, right), self.covariances.get((right, left)))
+        if pair_variance is None or other_variance is None or covariance is None:
+            return None
+        denominator = (pair_variance * other_variance) ** 0.5
+        return covariance / denominator if denominator else None
+
+
+@dataclass(frozen=True, slots=True)
 class PortfolioRiskConfig:
     constraints: tuple[object, ...] = field(default_factory=tuple)
 
@@ -106,6 +121,7 @@ class SignalComposer:
 
         processed: list[TargetPosition] = []
         total_weight = sum(target.net_weight for target in targets)
+        correlation_rejects = self._correlation_rejections(by_symbol)
         for target in targets:
             status, reason = "accepted", None
             for constraint in self.config.constraints:
@@ -152,6 +168,8 @@ class SignalComposer:
                     total_weight
                 ) > constraint.max_weight:
                     status, reason = "rejected", "TOTAL_POSITION_LIMIT"
+                elif isinstance(constraint, CorrelationBudget) and target.symbol in correlation_rejects:
+                    status, reason = "rejected", "CORRELATION_BUDGET"
             processed.append(
                 TargetPosition(
                     symbol=target.symbol,
@@ -172,3 +190,29 @@ class SignalComposer:
             for target in processed
         )
         return CompositionResult(targets=tuple(processed), decisions=decisions)
+
+    def _correlation_rejections(
+        self, by_symbol: Mapping[str, Mapping[str, float]]
+    ) -> set[str]:
+        constraints = [
+            item for item in self.config.constraints if isinstance(item, CorrelationBudget)
+        ]
+        rejected: set[str] = set()
+        for constraint in constraints:
+            symbols = list(by_symbol)
+            for index, left in enumerate(symbols):
+                for right in symbols[index + 1 :]:
+                    left_strategies = list(by_symbol[left])
+                    right_strategies = list(by_symbol[right])
+                    correlations = [
+                        value
+                        for left_strategy in left_strategies
+                        for right_strategy in right_strategies
+                        if (
+                            value := constraint.correlation(left_strategy, right_strategy)
+                        )
+                        is not None
+                    ]
+                    if correlations and max(correlations) > constraint.max_correlation:
+                        rejected.update((left, right))
+        return rejected
