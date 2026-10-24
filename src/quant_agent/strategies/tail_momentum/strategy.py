@@ -23,13 +23,8 @@ class TailMomentumStrategy:
 
     @classmethod
     def from_config(cls, config: Mapping[str, object]) -> "TailMomentumStrategy":
-        unknown = set(config) - {"lookback", "universe"}
-        if unknown:
-            raise ValueError(f"unknown configuration keys: {sorted(unknown)}")
-        if "universe" not in config:
-            raise ValueError("universe is required")
         return cls(
-            lookback=int(config["lookback"]),
+            lookback=config["lookback"],
             universe=config["universe"],
         )
 
