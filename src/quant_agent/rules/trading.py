@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
+from zoneinfo import ZoneInfo
 from typing import Mapping
 
 from quant_agent.domain.models import Instrument, Order
@@ -10,6 +11,7 @@ from quant_agent.rules.calendar import TradingCalendar
 
 
 CHINEXT_20_PERCENT_START = date(2020, 8, 24)
+CN_MARKET_TZ = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +25,12 @@ class PriceBand:
 class Rejection:
     code: str
     message: str
+
+
+@dataclass(frozen=True, slots=True)
+class Tradeability:
+    tradable: bool
+    reason_code: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +68,22 @@ class TradingRulesPlugin:
 
     def _is_trading_day(self, day: date) -> bool:
         return self.calendar.is_trading_day(day) if self.calendar else day.weekday() < 5
+
+    def tradeability(self, instrument: Instrument, as_of: datetime) -> Tradeability:
+        local_time = as_of.astimezone(CN_MARKET_TZ)
+        if instrument.status != "Active":
+            return Tradeability(False, "INSTRUMENT_NOT_ACTIVE")
+        if not self._is_trading_day(local_time.date()):
+            return Tradeability(False, "NON_TRADING_DAY")
+        local_clock = local_time.time().replace(tzinfo=None)
+        morning = time(9, 30) <= local_clock <= time(11, 30)
+        afternoon = time(13, 0) <= local_clock <= time(15, 0)
+        if not (morning or afternoon):
+            return Tradeability(False, "OUTSIDE_CONTINUOUS_AUCTION")
+        return Tradeability(True)
+
+    def valid_price(self, instrument: Instrument, price: Decimal) -> bool:
+        return price % instrument.tick == 0
 
     def _limit_percent(self, instrument: Instrument, day: date) -> Decimal:
         if instrument.board == "STAR":

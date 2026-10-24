@@ -1,5 +1,8 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
+
+CN_TZ = ZoneInfo("Asia/Shanghai")
 
 import pytest
 
@@ -189,3 +192,30 @@ def test_order_execution_conserves_cash_and_position():
 
     assert cash == Decimal("10000.00")
     assert position.settled_qty >= 0
+
+
+@pytest.mark.parametrize(
+    ("item", "time", "tradable"),
+    [
+        (instrument(), datetime(2026, 9, 15, 9, 20, tzinfo=CN_TZ), False),
+        (instrument(), datetime(2026, 9, 15, 9, 30, tzinfo=CN_TZ), True),
+        (instrument(), datetime(2026, 9, 15, 11, 30, tzinfo=CN_TZ), True),
+        (instrument(), datetime(2026, 9, 15, 12, 30, tzinfo=CN_TZ), False),
+        (instrument(), datetime(2026, 9, 15, 15, 0, tzinfo=CN_TZ), True),
+    ],
+)
+def test_continuous_auction_session_matrix(item, time, tradable):
+    assert TradingRulesPlugin().tradeability(item, time).tradable is tradable
+
+
+@pytest.mark.parametrize(
+    ("price", "valid"),
+    [
+        (Decimal("10.00"), True),
+        (Decimal("10.01"), True),
+        (Decimal("10.005"), False),
+        (Decimal("10"), True),
+    ],
+)
+def test_order_price_must_follow_tick(price, valid):
+    assert TradingRulesPlugin().valid_price(instrument(), price) is valid
