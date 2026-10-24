@@ -1,3 +1,7 @@
+import hashlib
+import json
+import os
+
 import pytest
 
 from quant_agent.agents.gateway import AgentGateway, AgentRequest
@@ -118,3 +122,88 @@ def test_agent_events_bind_to_run_manifest():
     assert event.status == "allowed"
     with pytest.raises(AttributeError):
         event.status = "denied"
+
+
+def test_audit_event_captures_invocation_and_model_details():
+    from datetime import datetime, timezone
+
+    from quant_agent.agents.gateway import AuditEvent
+    from quant_agent.domain.models import RunManifest
+
+    manifest = RunManifest(
+        run_id="run-audit",
+        git_sha="a" * 40,
+        config_hash="b" * 64,
+        data_snapshot="snapshot-1",
+        seed=7,
+        created_at=datetime(2026, 10, 24, tzinfo=timezone.utc),
+    )
+    gateway = AgentGateway(
+        allowed_tools={"read_dataset"},
+        manifest=manifest,
+        model_id="research-model-1",
+        audit_sink=lambda event: persisted.append(event),
+    )
+    persisted = []
+    arguments = {"dataset": "approved-snapshot", "nested": {"limit": 3}}
+
+    gateway.execute(AgentRequest(agent_id="research", tool="read_dataset", arguments=arguments))
+    denied = gateway.execute(AgentRequest(agent_id="research", tool="submit_order", arguments={"quantity": 100}))
+
+    event = gateway.audit_events[0]
+    assert isinstance(event, AuditEvent)
+    assert event.model_id == "research-model-1"
+    assert event.arguments == arguments
+    assert event.arguments is not arguments
+    assert event.arguments_sha256 == hashlib.sha256(
+        json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert event.output == {"dataset": "approved-snapshot", "nested": {"limit": 3}, "mode": "read-only"}
+    assert event.reason_code is None
+    assert gateway.audit_events[1].reason_code == "TOOL_NOT_ALLOWED"
+    assert gateway.audit_events[1].output is None
+    assert persisted == gateway.audit_events
+
+
+def test_audit_sink_failure_does_not_mask_agent_result():
+    gateway = AgentGateway(
+        allowed_tools={"read_dataset"},
+        model_id="research-model-1",
+        audit_sink=lambda event: (_ for _ in ()).throw(RuntimeError("audit unavailable")),
+    )
+
+    result = gateway.execute(AgentRequest(agent_id="research", tool="read_dataset", arguments={}))
+
+    assert result.status == "allowed"
+    assert gateway.audit_events[-1].status == "audit_write_failed"
+
+
+def test_json_audit_sink_persists_complete_records(tmp_path):
+    from quant_agent.agents.gateway import json_audit_sink
+
+    path = os.path.join(tmp_path, "agent-audit.jsonl")
+    gateway = AgentGateway(
+        allowed_tools={"read_dataset"},
+        model_id="research-model-1",
+        audit_sink=json_audit_sink(path),
+    )
+    arguments = {"dataset": "approved-snapshot"}
+
+    result = gateway.execute(AgentRequest(agent_id="research", tool="read_dataset", arguments=arguments))
+
+    with open(path, encoding="utf-8") as audit_file:
+        persisted = json.loads(audit_file.read())
+    assert persisted == {
+        "run_id": "",
+        "manifest_hash": "",
+        "agent_id": "research",
+        "tool": "read_dataset",
+        "status": result.status,
+        "model_id": "research-model-1",
+        "arguments_sha256": hashlib.sha256(
+            json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "arguments": arguments,
+        "output": result.output,
+        "reason_code": None,
+    }

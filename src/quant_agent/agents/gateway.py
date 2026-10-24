@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import copy
+import dataclasses
+import hashlib
+import json
+import logging
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from quant_agent.domain.models import RunManifest
@@ -36,12 +42,71 @@ class AuditEvent:
     agent_id: str
     tool: str
     status: str
+    model_id: str = ""
+    arguments_sha256: str = ""
+    arguments: Mapping[str, Any] | None = None
+    output: Mapping[str, Any] | None = None
+    reason_code: str | None = None
+
+
+def _digest(data: Mapping[str, Any]) -> str:
+    encoded = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _snapshot(data: Mapping[str, Any]) -> Mapping[str, Any]:
+    return MappingProxyType({key: copy.deepcopy(value) for key, value in data.items()})
+
+
+def _plain(data: Any) -> Any:
+    if isinstance(data, MappingProxyType):
+        return dict(data)
+    return data
+
+
+def json_audit_sink(path: str):
+    def append(event: AuditEvent) -> None:
+        record = {
+            "run_id": event.run_id,
+            "manifest_hash": event.manifest_hash,
+            "agent_id": event.agent_id,
+            "tool": event.tool,
+            "status": event.status,
+            "model_id": event.model_id,
+            "arguments_sha256": event.arguments_sha256,
+            "arguments": _plain(event.arguments),
+            "output": _plain(event.output),
+            "reason_code": event.reason_code,
+        }
+        with open(path, "a", encoding="utf-8") as audit_file:
+            audit_file.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+    return append
+
+
+def memory_audit_sink(events: list[AuditEvent]) -> None:
+    def append(event: AuditEvent) -> None:
+        events.append(event)
+
+    return append
+
+
+def null_audit_sink(event: AuditEvent) -> None:
+    """No-op sink for tests and callers that manage audit storage externally."""
 
 
 class AgentGateway:
-    def __init__(self, allowed_tools: set[str], manifest: RunManifest | None = None):
+    def __init__(
+        self,
+        allowed_tools: set[str],
+        manifest: RunManifest | None = None,
+        model_id: str = "",
+        audit_sink=None,
+    ):
         self.allowed_tools = set(allowed_tools)
         self.manifest = manifest
+        self.model_id = model_id
+        self.audit_sink = audit_sink
         self.audit_events: list[AuditEvent] = []
 
     def execute(self, request: AgentRequest) -> AgentResult:
@@ -73,17 +138,26 @@ class AgentGateway:
         return result
 
     def _audit(self, request: AgentRequest, result: AgentResult) -> None:
-        if self.manifest is None:
-            return
-        self.audit_events.append(
-            AuditEvent(
-                run_id=self.manifest.run_id,
-                manifest_hash=self.manifest.content_hash,
-                agent_id=request.agent_id,
-                tool=request.tool,
-                status=result.status,
-            )
+        event = AuditEvent(
+            run_id=self.manifest.run_id if self.manifest else "",
+            manifest_hash=self.manifest.content_hash if self.manifest else "",
+            agent_id=request.agent_id,
+            tool=request.tool,
+            status=result.status,
+            model_id=self.model_id,
+            arguments_sha256=_digest(request.arguments),
+            arguments=_snapshot(request.arguments),
+            output=_snapshot(result.output) if result.output is not None else None,
+            reason_code=result.reason_code,
         )
+        self.audit_events.append(event)
+        if self.audit_sink is None:
+            return
+        try:
+            self.audit_sink(event)
+        except Exception:
+            logging.exception("agent audit write failed")
+            self.audit_events[-1] = dataclasses.replace(event, status="audit_write_failed")
 
     def validate_output(
         self,
