@@ -37,9 +37,48 @@ PYTHONPATH=src python3 -m quant_agent.cli.paper \
   --config configs/tail_momentum.json --dry-run
 
 # 非 dry-run：必须由调用方注入执行器，否则 fail closed
+PYTHONPATH=src python3 -m quant_agent.cli.paper \
+  --approvals state/paper-approvals.json run \
+  --strategy tail_momentum_overnight \
+  --config configs/tail_momentum.json
 ```
 
-`PaperGateway.run(dry_run=False)` 只有在构造时注入 `PaperExecution` 才会执行；CLI 默认不注入执行器，以免在没有交易通道和运行清单的情况下误发订单。退出码 `0` 表示成功，`2` 表示审批、配置或执行器错误。
+`PaperGateway.run(dry_run=False)` 只有在构造时注入 `PaperExecution` 才会执行。非 dry-run 且未注入执行器时，CLI 会从配置的 `execution` 段构造 `SimulatedPaperExecution`；缺少该段则 fail closed，以免在没有交易通道和运行清单的情况下误发订单。退出码 `0` 表示成功，`2` 表示审批、配置或执行器错误。
+
+### 默认模拟成交配置
+
+非 dry-run 时配置需提供 `execution` 段，以及每个 `universe` 标的的 `market` 快照：
+
+```json
+{
+  "config_hash": "hash-1",
+  "universe": ["sh600176"],
+  "market": {
+    "sh600176": { "last": "10.05", "previous_close": "10.00", "tradable": true }
+  },
+  "execution": {
+    "exchange": "SSE",
+    "initial_cash": "100000.00",
+    "commission_rate": "0.0003",
+    "stamp_tax_rate": "0.0005",
+    "slippage_rate": "0.001",
+    "buy_quantity": 100,
+    "instruments": [
+      {
+        "symbol": "sh600176",
+        "exchange": "SSE",
+        "board": "MainBoard",
+        "status": "Active",
+        "listing_date": "2010-01-01",
+        "tick": "0.01",
+        "lot_size": 100
+      }
+    ]
+  }
+}
+```
+
+模拟成交复用 `TradingRulesPlugin` 与订单状态机：非交易时段、停牌、涨跌停、非整手与 T+1 未结算卖出都会被拒绝并记录原因码；买入按滑点后价格并量化到最小价位，卖出额外计入印花税。只有配置 `universe` 内的标的会成为下单目标，`market` 中的额外标的只作为参考数据。
 
 ## 性能基准
 

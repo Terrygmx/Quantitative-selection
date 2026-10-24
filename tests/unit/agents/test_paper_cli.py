@@ -1,12 +1,21 @@
 import json
+from datetime import date
+from decimal import Decimal
 from dataclasses import asdict
 from datetime import datetime, timezone
 
 import pytest
 
-from quant_agent.agents.paper import ApprovalRecord
+from quant_agent.agents.paper import (
+    ApprovalRecord,
+    PaperExecutionConfig,
+    SimulatedPaperExecution,
+)
 from quant_agent.cli.paper import build_parser, main
 from quant_agent.domain.clock import FixedClock
+from quant_agent.domain.models import Instrument
+from quant_agent.rules.calendar import StaticTradingCalendar
+from quant_agent.rules.trading import TradingRulesPlugin
 
 
 @pytest.fixture
@@ -29,6 +38,44 @@ def write_config(path, *, config_hash="hash-1", universe=None):
         encoding="utf-8",
     )
     return path
+
+
+def market_config(path, *, symbol="sh600176", last="10.05", previous_close="10.00"):
+    path.write_text(
+        json.dumps(
+            {
+                "config_hash": "hash-1",
+                "universe": [symbol],
+                "market": {
+                    symbol: {
+                        "last": last,
+                        "previous_close": previous_close,
+                        "tradable": True,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def default_execution():
+    return SimulatedPaperExecution(
+        config=PaperExecutionConfig(initial_cash=Decimal("100000.00")),
+        instruments={
+            "sh600176": Instrument(
+                symbol="sh600176",
+                exchange="SSE",
+                board="MainBoard",
+                status="Active",
+                listing_date=date(2010, 1, 1),
+                tick=Decimal("0.01"),
+                lot_size=100,
+            )
+        },
+        rules=TradingRulesPlugin(StaticTradingCalendar.for_exchange("SSE")),
+    )
 
 
 def test_paper_cli_help_exposes_required_commands(capsys):
@@ -202,6 +249,103 @@ def test_paper_cli_non_dry_run_fails_closed_without_executor(
 
     assert exit_code == 2
     assert "execution is not configured" in capsys.readouterr().err
+
+
+def test_paper_cli_non_dry_run_runs_default_simulated_execution(
+    tmp_path, capsys, approval
+):
+    approval_file = tmp_path / "approvals.json"
+    config_file = market_config(tmp_path / "config.json")
+    approval_file.write_text(json.dumps([asdict(approval)]), encoding="utf-8")
+
+    exit_code = main(
+        [
+            "--approvals",
+            str(approval_file),
+            "run",
+            "--strategy",
+            approval.strategy_id,
+            "--config",
+            str(config_file),
+        ],
+        execution=default_execution(),
+        clock=FixedClock(datetime(2026, 10, 26, 6, 45, tzinfo=timezone.utc)),
+    )
+
+    assert exit_code == 0
+    document = json.loads(capsys.readouterr().out)
+    assert document["status"] == "PAPER_EXECUTED"
+    assert document["orders"][0]["status"] == "FILLED"
+    assert document["orders"][0]["price"] == "10.06"
+
+
+def test_paper_cli_builds_default_execution_from_config(
+    tmp_path, capsys, approval
+):
+    approval_file = tmp_path / "approvals.json"
+    config_file = market_config(tmp_path / "config.json")
+    payload = json.loads(config_file.read_text(encoding="utf-8"))
+    payload["execution"] = {
+        "initial_cash": "100000.00",
+        "buy_quantity": 100,
+        "instruments": [
+            {
+                "symbol": "sh600176",
+                "exchange": "SSE",
+                "board": "MainBoard",
+                "status": "Active",
+                "listing_date": "2010-01-01",
+                "tick": "0.01",
+                "lot_size": 100,
+            }
+        ],
+        "exchange": "SSE",
+    }
+    config_file.write_text(json.dumps(payload), encoding="utf-8")
+    approval_file.write_text(json.dumps([asdict(approval)]), encoding="utf-8")
+
+    exit_code = main(
+        [
+            "--approvals",
+            str(approval_file),
+            "run",
+            "--strategy",
+            approval.strategy_id,
+            "--config",
+            str(config_file),
+        ],
+        clock=FixedClock(datetime(2026, 10, 26, 6, 45, tzinfo=timezone.utc)),
+    )
+
+    assert exit_code == 0
+    document = json.loads(capsys.readouterr().out)
+    assert document["status"] == "PAPER_EXECUTED"
+    assert document["orders"][0]["status"] == "FILLED"
+    assert document["orders"][0]["price"] == "10.06"
+
+
+def test_paper_cli_non_dry_run_fails_closed_without_market_data(
+    tmp_path, capsys, approval
+):
+    approval_file = tmp_path / "approvals.json"
+    config_file = write_config(tmp_path / "config.json")
+    approval_file.write_text(json.dumps([asdict(approval)]), encoding="utf-8")
+
+    exit_code = main(
+        [
+            "--approvals",
+            str(approval_file),
+            "run",
+            "--strategy",
+            approval.strategy_id,
+            "--config",
+            str(config_file),
+        ],
+        execution=default_execution(),
+    )
+
+    assert exit_code == 2
+    assert "market snapshot" in capsys.readouterr().err
 
 
 class FixedExecution:

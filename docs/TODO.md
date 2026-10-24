@@ -42,7 +42,9 @@
 - [x] `validate_output` 已通过锁定的 jsonschema 4.25.1 支持 JSON Schema Draft 2020-12。
 - [x] 工具调用生成绑定 `RunManifest` 的不可变审计事件，记录输入摘要、模型标识、结构化输出，并支持 JSONL 持久化。
 - [x] 模拟盘 Gateway 与调度器已具备配置哈希绑定的人工批准记录、dry-run 空订单计划、可注入的非 dry-run 执行器、运行时间传递和运行历史；`paper approve/run` 命令入口已提供并默认 fail closed。
-- [ ] 非 dry-run 目前只有可注入执行器契约，尚无连接 `MultiInstrumentBacktestEngine`/规则层的默认模拟成交实现；生产启用前需补默认执行器及其 T+1、费用、现金和订单审计契约测试。
+- [x] 非 dry-run 默认执行器 `SimulatedPaperExecution` 已接入 `TradingRulesPlugin`、订单状态机与 `MarketSnapshot`，覆盖 T+1 结算、佣金、印花税、滑点、最小价位、现金不足、停牌、涨跌停、非整手和非连续竞价拒绝；CLI 可从配置 `execution` 段构造执行器，缺少该段仍 fail closed。
+- [ ] 默认模拟执行器与 `MultiInstrumentBacktestEngine` 仍是两套独立成交账本，未共用同一成交器；生产启用前需抽取共享成交内核并补跨引擎等价测试。
+- [ ] `StaticTradingCalendar` 仍缺 2027 以后年份与外部数据源适配（同 M2 缺口）。
 
 ## M8 质量闸门
 

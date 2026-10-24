@@ -2,16 +2,23 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import sys
+from datetime import date
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Mapping, Sequence
 
 from quant_agent.agents.paper import (
     ApprovalRecord,
     PaperExecution,
     PaperGateway,
+    PaperExecutionConfig,
+    SimulatedPaperExecution,
 )
 from quant_agent.domain.clock import Clock, SystemClock
+from quant_agent.domain.models import Instrument
+from quant_agent.rules.calendar import StaticTradingCalendar
+from quant_agent.rules.trading import TradingRulesPlugin
 
 
 DEFAULT_APPROVALS = Path("state/paper-approvals.json")
@@ -70,6 +77,62 @@ def _load_config(path: Path) -> dict[str, object]:
     if not isinstance(data, dict):
         raise ValueError("strategy config must be a JSON object")
     return data
+
+
+def _decimal(value: object, field: str) -> Decimal:
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"{field} must be a decimal string") from exc
+
+
+def _execution_from_config(config: Mapping[str, object]) -> PaperExecution:
+    section = config.get("execution")
+    if not isinstance(section, Mapping):
+        raise ValueError("paper execution is not configured")
+    instruments: dict[str, Instrument] = {}
+    raw_instruments = section.get("instruments")
+    if not isinstance(raw_instruments, list) or not raw_instruments:
+        raise ValueError("execution instruments are required")
+    for item in raw_instruments:
+        if not isinstance(item, Mapping):
+            raise ValueError("execution instruments must be objects")
+        try:
+            instruments[str(item["symbol"])] = Instrument(
+                symbol=str(item["symbol"]),
+                exchange=str(item["exchange"]),
+                board=str(item["board"]),
+                status=str(item["status"]),
+                listing_date=date.fromisoformat(str(item["listing_date"])),
+                tick=_decimal(item["tick"], "tick"),
+                lot_size=int(item["lot_size"]),
+            )
+        except KeyError as exc:
+            raise ValueError(f"execution instrument missing {exc.args[0]}") from exc
+    exchange = str(section.get("exchange", "SSE"))
+    try:
+        calendar = StaticTradingCalendar.for_exchange(exchange)
+    except ValueError as exc:
+        raise ValueError(f"unsupported calendar exchange: {exchange}") from exc
+    return SimulatedPaperExecution(
+        config=PaperExecutionConfig(
+            initial_cash=_decimal(
+                section.get("initial_cash", "100000.00"), "initial_cash"
+            ),
+            commission_rate=_decimal(
+                section.get("commission_rate", "0.0003"), "commission_rate"
+            ),
+            stamp_tax_rate=_decimal(
+                section.get("stamp_tax_rate", "0.0005"), "stamp_tax_rate"
+            ),
+            slippage_rate=_decimal(
+                section.get("slippage_rate", "0.001"), "slippage_rate"
+            ),
+            buy_quantity=int(section.get("buy_quantity", 100)),
+        ),
+        instruments=instruments,
+        rules=TradingRulesPlugin(calendar),
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -138,6 +201,8 @@ def main(
             return 0
 
         config = _load_config(args.config)
+        if execution is None and not args.dry_run:
+            execution = _execution_from_config(config)
         gateway = PaperGateway(clock=clock, execution=execution)
         for record in _load_approvals(approvals_path):
             gateway.approve(record)
