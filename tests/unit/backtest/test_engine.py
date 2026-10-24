@@ -4,6 +4,8 @@ from decimal import Decimal
 import pytest
 
 from quant_agent.application.backtest import BacktestConfig, BacktestEngine
+from quant_agent.domain.models import Instrument
+from quant_agent.rules.trading import Portfolio as RulesPortfolio, Position as RulesPosition, TradingRulesPlugin
 
 
 D1 = date(2026, 9, 14)
@@ -15,7 +17,18 @@ TS3 = datetime(2026, 9, 16, 9, 31, tzinfo=timezone.utc)
 
 
 @pytest.fixture
-def engine():
+def basic_config():
+    return BacktestConfig(
+        initial_cash=Decimal("10000.00"),
+        buy_quantity=100,
+        commission_rate=Decimal("0.0003"),
+        stamp_tax_rate=Decimal("0.0005"),
+        slippage_rate=Decimal("0.001"),
+    )
+
+
+@pytest.fixture
+def engine(basic_config):
     bars = [
         {"date": D1, "open": "10.00", "close": "10.10", "previous_close": "10.00"},
         {"date": D2, "open": "10.20", "close": "10.30", "previous_close": "10.10"},
@@ -23,13 +36,17 @@ def engine():
     ]
     return BacktestEngine(
         bars=bars,
-        config=BacktestConfig(
-            initial_cash=Decimal("10000.00"),
-            buy_quantity=100,
-            commission_rate=Decimal("0.0003"),
-            stamp_tax_rate=Decimal("0.0005"),
-            slippage_rate=Decimal("0.001"),
+        config=basic_config,
+        instrument=Instrument(
+            symbol="sh600519",
+            exchange="SSE",
+            board="MainBoard",
+            status="Active",
+            listing_date=date(2001, 8, 27),
+            tick=Decimal("0.01"),
+            lot_size=100,
         ),
+        rules=TradingRulesPlugin(),
     )
 
 
@@ -42,6 +59,7 @@ def test_buy_signal_fills_next_open_and_honors_t_plus_one(engine):
         "FILL",
         "ORDER",
         "REJECTION",
+        "SESSION_SETTLE",
     ]
     assert events[0].as_of == TS1
     assert events[1].order.side == "buy"
@@ -67,3 +85,22 @@ def test_after_settlement_sell_fills_next_open(engine):
 def test_engine_rejects_same_bar_close_signal_and_fill(engine):
     with pytest.raises(ValueError, match="same bar"):
         engine.same_bar_close_signal_and_fill(D1, Decimal("10.10"))
+
+
+def test_engine_requires_rules_plugin(basic_config):
+    with pytest.raises(ValueError, match="instrument"):
+        BacktestEngine(bars=[], config=basic_config)
+
+
+def test_engine_routes_orders_through_rules(engine):
+    called = {}
+    original_validate = engine.rules.validate_order
+
+    def validate(order, portfolio, market):
+        called[order.side] = True
+        return original_validate(order, portfolio, market)
+
+    engine.rules.validate_order = validate
+    engine.run()
+
+    assert called == {"buy": True, "sell": True}

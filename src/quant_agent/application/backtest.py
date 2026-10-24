@@ -5,6 +5,11 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Mapping
 
+from quant_agent.domain.models import Instrument, Order
+from quant_agent.rules.trading import Portfolio as RulesPortfolio
+from quant_agent.rules.trading import Position as RulesPosition
+from quant_agent.rules.trading import Rejection, TradingRulesPlugin
+
 
 @dataclass(frozen=True, slots=True)
 class BacktestConfig:
@@ -55,9 +60,21 @@ class Position:
 
 
 class BacktestEngine:
-    def __init__(self, bars: Mapping[str, object], config: BacktestConfig):
+    def __init__(
+        self,
+        bars: Mapping[str, object],
+        config: BacktestConfig,
+        instrument: Instrument | None = None,
+        rules: TradingRulesPlugin | None = None,
+    ):
+        if instrument is None:
+            raise ValueError("instrument metadata is required")
+        if rules is None:
+            raise ValueError("rules plugin is required")
         self.bars = list(bars)
         self.config = config
+        self.instrument = instrument
+        self.rules = rules
         self.cash = config.initial_cash
         self.position = Position()
         self._order_id = 0
@@ -84,8 +101,12 @@ class BacktestEngine:
             31,
             tzinfo=timezone.utc,
         )
-        order = OrderRecord("buy", self.config.buy_quantity, buy_time)
+        order = self._create_order("buy", buy_bar, buy_time)
         events.append(Event("ORDER", buy_time, order=order))
+        rejections = self._validate_order(order, buy_bar)
+        if rejections:
+            events.append(Event("REJECTION", buy_time, rejection_code=rejections[0].code))
+            return events
         fill_price = Decimal(str(buy_bar["open"])) * (1 + self.config.slippage_rate)
         gross = fill_price * order.quantity
         fee = gross * self.config.commission_rate
@@ -106,12 +127,47 @@ class BacktestEngine:
             31,
             tzinfo=timezone.utc,
         )
-        sell_order = OrderRecord("sell", self.config.buy_quantity, sell_time)
+        sell_order = self._create_order("sell", sell_bar, sell_time)
         events.append(Event("ORDER", sell_time, order=sell_order))
-        events.append(Event("REJECTION", sell_time, rejection_code="T1_UNSETTLED"))
+        sell_rejections = self._validate_order(sell_order, sell_bar)
+        if sell_rejections:
+            events.append(
+                Event("REJECTION", sell_time, rejection_code=sell_rejections[0].code)
+            )
+        events.append(Event("SESSION_SETTLE", sell_time, cash_after=self.cash))
         self.position.settled_qty += self.position.unsettled_buy_qty
         self.position.unsettled_buy_qty = 0
         return events
+
+    def _create_order(self, side: str, bar: Mapping[str, object], timestamp: datetime) -> Order:
+        price = Decimal(str(bar["open"]))
+        return Order(
+            id=f"order-{self._order_id + 1}",
+            symbol=self.instrument.symbol,
+            side=side,
+            quantity=self.config.buy_quantity,
+            limit_price=price,
+            created_at=timestamp,
+        )
+
+    def _validate_order(self, order: Order, bar: Mapping[str, object]) -> list[Rejection]:
+        portfolio = RulesPortfolio(
+            {
+                order.symbol: RulesPosition(
+                    settled_qty=self.position.settled_qty,
+                    unsettled_buy_qty=self.position.unsettled_buy_qty,
+                )
+            }
+        )
+        market = {
+            order.symbol: {
+                "last": Decimal(str(bar["open"])),
+                "previous_close": Decimal(str(bar["previous_close"])),
+                "instrument": self.instrument,
+                "tradable": self.instrument.status == "Active",
+            }
+        }
+        return self.rules.validate_order(order, portfolio, market)
 
     def equity(self, day: date, close: Decimal) -> Decimal:
         return self.cash + close * (self.position.settled_qty + self.position.unsettled_buy_qty)
