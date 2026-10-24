@@ -38,7 +38,7 @@
 
 ## M7 Agent 与模拟盘
 
-- [ ] `validate_output` 已通过锁定的 jsonschema 4.25.1 支持 JSON Schema Draft 2020-12。
+- [x] `validate_output` 已通过锁定的 jsonschema 4.25.1 支持 JSON Schema Draft 2020-12。
 - [x] 工具调用生成绑定 `RunManifest` 的不可变审计事件，记录输入摘要、模型标识、结构化输出，并支持 JSONL 持久化。
 - [ ] 模拟盘 Gateway 与调度器已具备配置哈希绑定的人工批准记录、dry-run 空订单计划和运行历史；仍需命令入口与非 dry-run 执行。
 
@@ -46,4 +46,4 @@
 
 - [x] 覆盖率阈值不低于 90% 已接入 CI，当前总覆盖率 96%。
 - [x] Ruff 已锁定 0.13.3 并接入 CI；Mypy 1.18.2 已锁定但现存类型债务未清零，暂未作为 CI 阻断。
-- [ ] 已建立 3000 只股票 × 5 年合成基准（本机约 70.5 秒）与 `docs/RUNBOOK.md`。
+- [x] 已建立 3000 只股票 × 5 年合成基准（本机约 70.5 秒）与 `docs/RUNBOOK.md`。
