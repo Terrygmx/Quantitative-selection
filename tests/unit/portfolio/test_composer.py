@@ -142,3 +142,16 @@ def test_blacklist_only_applies_on_and_after_effective_date():
 
     assert active.targets[0].status == "rejected"
     assert before.targets[0].status == "accepted"
+
+
+def test_risk_decisions_are_immutable_audit_records():
+    result = composer(SinglePositionConstraint(max_weight=0.1)).compose(
+        [signal(weight=0.3)]
+    )
+
+    decision = result.decisions[0]
+
+    assert decision.status == "reduced"
+    assert decision.reason_code == "SINGLE_POSITION_LIMIT"
+    with pytest.raises(AttributeError):
+        decision.status = "accepted"

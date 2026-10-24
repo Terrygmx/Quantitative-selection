@@ -56,8 +56,17 @@ class TargetPosition:
 
 
 @dataclass(frozen=True, slots=True)
+class RiskDecision:
+    symbol: str
+    status: str
+    net_weight: float
+    reason_code: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CompositionResult:
     targets: tuple[TargetPosition, ...]
+    decisions: tuple[RiskDecision, ...] = field(default_factory=tuple)
 
 
 class SignalComposer:
@@ -153,4 +162,13 @@ class SignalComposer:
                     reason_code=reason,
                 )
             )
-        return CompositionResult(targets=tuple(processed))
+        decisions = tuple(
+            RiskDecision(
+                symbol=target.symbol,
+                status=target.status,
+                net_weight=target.net_weight,
+                reason_code=target.reason_code,
+            )
+            for target in processed
+        )
+        return CompositionResult(targets=tuple(processed), decisions=decisions)
