@@ -198,3 +198,15 @@ def test_all_backtest_orders_use_market_snapshot(engine):
         ("sell", "MarketSnapshot"),
         ("sell", "MarketSnapshot"),
     ]
+
+
+def test_backtest_orders_transition_through_state_machine(engine):
+    from quant_agent.application.orders import OrderStateMachine
+
+    events = engine.run()
+
+    assert engine.order_states.get("order-1").status == "FILLED"
+    assert engine.order_states.get("order-2").status == "REJECTED"
+    assert engine.order_states.get("order-2").rejection_code == "T1_UNSETTLED"
+    assert events[2].fill.order_id == "order-1"
+    assert events[4].rejection.code == "T1_UNSETTLED"

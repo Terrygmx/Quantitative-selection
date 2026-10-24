@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from typing import Mapping
 
 from quant_agent.domain.models import Instrument, Order
+from quant_agent.application.orders import OrderStateMachine, PendingOrder
 from quant_agent.rules.trading import Portfolio as RulesPortfolio
 from quant_agent.rules.trading import Position as RulesPosition
 from quant_agent.rules.trading import MarketSnapshot, Rejection, TradingRulesPlugin
@@ -81,6 +82,7 @@ class BacktestEngine:
         self.rules = rules
         self.cash = config.initial_cash
         self.position = Position()
+        self.order_states = OrderStateMachine()
         self._order_id = 0
 
     def run(self) -> list[Event]:
@@ -107,8 +109,10 @@ class BacktestEngine:
         )
         order = self._create_order("buy", buy_bar, buy_time)
         events.append(Event("ORDER", buy_time, order=order))
+        self.order_states.submit(PendingOrder(order.id, order.created_at))
         rejections = self._validate_order(order, buy_bar)
         if rejections:
+            self.order_states.reject(order.id, rejections[0].code, buy_time)
             events.append(Event("REJECTION", buy_time, rejection_code=rejections[0].code))
             return events
         fill_price = Decimal(str(buy_bar["open"])) * (1 + self.config.slippage_rate)
@@ -116,8 +120,8 @@ class BacktestEngine:
         fee = gross * self.config.commission_rate
         self.cash -= gross + fee
         self.position.unsettled_buy_qty += order.quantity
-        self._order_id += 1
-        fill = FillRecord(str(self._order_id), "buy", fill_price, order.quantity, fee, buy_time)
+        self.order_states.fill(order.id, buy_time)
+        fill = FillRecord(order.id, "buy", fill_price, order.quantity, fee, buy_time)
         events.append(
             Event("FILL", buy_time, fill=fill, cash_after=self.cash)
         )
@@ -133,8 +137,10 @@ class BacktestEngine:
         )
         sell_order = self._create_order("sell", sell_bar, sell_time)
         events.append(Event("ORDER", sell_time, order=sell_order))
+        self.order_states.submit(PendingOrder(sell_order.id, sell_order.created_at))
         sell_rejections = self._validate_order(sell_order, sell_bar)
         if sell_rejections:
+            self.order_states.reject(sell_order.id, sell_rejections[0].code, sell_time)
             events.append(
                 Event("REJECTION", sell_time, rejection_code=sell_rejections[0].code)
             )
@@ -145,8 +151,9 @@ class BacktestEngine:
 
     def _create_order(self, side: str, bar: Mapping[str, object], timestamp: datetime) -> Order:
         price = Decimal(str(bar["open"]))
+        self._order_id += 1
         return Order(
-            id=f"order-{self._order_id + 1}",
+            id=f"order-{self._order_id}",
             symbol=self.instrument.symbol,
             side=side,
             quantity=self.config.buy_quantity,
@@ -180,6 +187,7 @@ class BacktestEngine:
         bar = {"open": open_price, "previous_close": open_price}
         order = self._create_order("sell", bar, timestamp)
         events = [Event("ORDER", timestamp, order=OrderRecord(order.side, order.quantity, order.created_at))]
+        self.order_states.submit(PendingOrder(order.id, order.created_at))
         snapshot = MarketSnapshot(
             instrument=self.instrument,
             last=open_price,
@@ -190,6 +198,7 @@ class BacktestEngine:
         )
         rejections = self.rules.validate_order(order, self._rules_portfolio(), snapshot)
         if rejections:
+            self.order_states.reject(order.id, rejections[0].code, timestamp)
             events.append(Event("REJECTION", timestamp, rejection_code=rejections[0].code))
             return events
         if self.position.settled_qty < self.config.buy_quantity:
@@ -201,9 +210,9 @@ class BacktestEngine:
         commission = gross * self.config.commission_rate
         tax = gross * self.config.stamp_tax_rate
         self.cash += gross - commission - tax
-        self._order_id += 1
+        self.order_states.fill(order.id, timestamp)
         fill = FillRecord(
-            str(self._order_id), "sell", fill_price, self.config.buy_quantity,
+            order.id, "sell", fill_price, self.config.buy_quantity,
             commission + tax, timestamp,
         )
         events.append(Event("FILL", timestamp, fill=fill, cash_after=self.cash))
