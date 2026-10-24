@@ -6,7 +6,7 @@ import pytest
 
 from quant_agent.application.backtest import BacktestConfig, BacktestEngine
 from quant_agent.domain.models import Instrument
-from quant_agent.rules.trading import Portfolio as RulesPortfolio, Position as RulesPosition, TradingRulesPlugin
+from quant_agent.rules.trading import TradingRulesPlugin
 
 
 D1 = date(2026, 9, 14)
@@ -108,7 +108,6 @@ def test_engine_routes_orders_through_rules(engine):
 
 
 def test_sell_settled_is_rejected_by_trading_rules(engine):
-    from quant_agent.rules.trading import MarketSnapshot
 
     original_validate = engine.rules.validate_order
 
@@ -120,7 +119,7 @@ def test_sell_settled_is_rejected_by_trading_rules(engine):
         return original_validate(order, portfolio, market)
 
     engine.rules.validate_order = rejecting_validate
-    events = engine.run()
+    engine.run()
     engine.rules.validate_order = rejecting_validate
     result = engine.sell_settled(D3, Decimal("10.40"), timestamp=TS3)
 
@@ -180,7 +179,6 @@ def test_backtest_sell_allows_odd_lot_remainder(engine, basic_config):
 
 
 def test_all_backtest_orders_use_market_snapshot(engine):
-    from quant_agent.rules.trading import MarketSnapshot
 
     captured = []
     original_validate = engine.rules.validate_order
@@ -201,7 +199,6 @@ def test_all_backtest_orders_use_market_snapshot(engine):
 
 
 def test_backtest_orders_transition_through_state_machine(engine):
-    from quant_agent.application.orders import OrderStateMachine
 
     events = engine.run()
 

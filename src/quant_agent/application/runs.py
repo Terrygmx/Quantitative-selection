@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import secrets
-from typing import Any
 
 from quant_agent.domain.clock import Clock, SystemClock
 from quant_agent.domain.models import RunManifest

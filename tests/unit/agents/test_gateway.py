@@ -148,7 +148,7 @@ def test_audit_event_captures_invocation_and_model_details():
     arguments = {"dataset": "approved-snapshot", "nested": {"limit": 3}}
 
     gateway.execute(AgentRequest(agent_id="research", tool="read_dataset", arguments=arguments))
-    denied = gateway.execute(AgentRequest(agent_id="research", tool="submit_order", arguments={"quantity": 100}))
+    gateway.execute(AgentRequest(agent_id="research", tool="submit_order", arguments={"quantity": 100}))
 
     event = gateway.audit_events[0]
     assert isinstance(event, AuditEvent)

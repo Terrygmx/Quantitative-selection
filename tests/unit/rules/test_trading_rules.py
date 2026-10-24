@@ -1,14 +1,15 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
-
-CN_TZ = ZoneInfo("Asia/Shanghai")
 
 import pytest
 
 from quant_agent.domain.models import Instrument, Order
 from quant_agent.rules.calendar import StaticTradingCalendar
 from quant_agent.rules.trading import Portfolio, Position, TradingRulesPlugin
+
+
+CN_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def instrument(**overrides):
