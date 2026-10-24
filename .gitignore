@@ -46,3 +46,4 @@ desktop.ini
 # Local agent and index state
 .codegraph/
 .pi-loop.json.lock
+.coverage
