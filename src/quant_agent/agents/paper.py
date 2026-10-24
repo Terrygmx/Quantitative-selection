@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Mapping
 
 
@@ -36,3 +37,29 @@ class PaperGateway:
         if not dry_run:
             raise ValueError("live paper execution is not implemented")
         return PaperRunResult(status="DRY_RUN", orders=[])
+
+
+class PaperScheduler:
+    def __init__(self, gateway: PaperGateway, dry_run: bool = True):
+        self.gateway = gateway
+        self.dry_run = dry_run
+        self.history: list[dict[str, str]] = []
+
+    def run(
+        self,
+        strategy_id: str,
+        config: Mapping[str, object],
+        run_at: datetime | None = None,
+    ) -> PaperRunResult:
+        if not self.dry_run:
+            raise ValueError("live paper execution is not implemented")
+        result = self.gateway.run(strategy_id, config, dry_run=self.dry_run)
+        self.history.append(
+            {
+                "strategy_id": strategy_id,
+                "config_hash": str(config.get("config_hash", "")),
+                "status": result.status,
+                "run_at": run_at.isoformat() if run_at else "",
+            }
+        )
+        return result

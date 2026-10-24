@@ -40,7 +40,7 @@
 
 - [ ] `validate_output` 已支持显式 object schema 的 required/type 校验；仍需完整 JSON Schema Draft 2020-12 实现或显式引入并锁定 jsonschema 依赖。
 - [x] 工具调用生成绑定 `RunManifest` 的不可变审计事件，记录输入摘要、模型标识、结构化输出，并支持 JSONL 持久化。
-- [ ] 模拟盘 Gateway 已具备配置哈希绑定的人工批准记录和 dry-run 空订单计划；仍需调度、命令入口与非 dry-run 执行。
+- [ ] 模拟盘 Gateway 与调度器已具备配置哈希绑定的人工批准记录、dry-run 空订单计划和运行历史；仍需命令入口与非 dry-run 执行。
 
 ## M8 质量闸门
 
