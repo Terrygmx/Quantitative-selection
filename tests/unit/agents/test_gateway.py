@@ -179,13 +179,17 @@ def test_audit_sink_failure_does_not_mask_agent_result():
 
 
 def test_json_audit_sink_persists_complete_records(tmp_path):
+    from datetime import datetime, timezone
+
     from quant_agent.agents.gateway import json_audit_sink
+    from quant_agent.domain.clock import FixedClock
 
     path = os.path.join(tmp_path, "agent-audit.jsonl")
     gateway = AgentGateway(
         allowed_tools={"read_dataset"},
         model_id="research-model-1",
         audit_sink=json_audit_sink(path),
+        clock=FixedClock(datetime(2026, 10, 24, 9, 30, tzinfo=timezone.utc)),
     )
     arguments = {"dataset": "approved-snapshot"}
 
@@ -199,6 +203,7 @@ def test_json_audit_sink_persists_complete_records(tmp_path):
         "agent_id": "research",
         "tool": "read_dataset",
         "status": result.status,
+        "occurred_at": "2026-10-24T09:30:00+00:00",
         "model_id": "research-model-1",
         "arguments_sha256": hashlib.sha256(
             json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode()
@@ -207,3 +212,16 @@ def test_json_audit_sink_persists_complete_records(tmp_path):
         "output": result.output,
         "reason_code": None,
     }
+
+
+def test_audit_event_uses_injected_clock():
+    from datetime import datetime, timezone
+
+    from quant_agent.domain.clock import FixedClock
+
+    clock = FixedClock(datetime(2026, 10, 24, 9, 31, tzinfo=timezone.utc))
+    gateway = AgentGateway(allowed_tools={"read_dataset"}, clock=clock)
+
+    gateway.execute(AgentRequest(agent_id="research", tool="read_dataset", arguments={}))
+
+    assert gateway.audit_events[-1].occurred_at == clock.now()

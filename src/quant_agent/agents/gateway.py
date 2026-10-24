@@ -4,11 +4,13 @@ from dataclasses import dataclass
 import copy
 import dataclasses
 import hashlib
+from datetime import datetime
 import json
 import logging
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from quant_agent.domain.clock import Clock, SystemClock
 from quant_agent.domain.models import RunManifest
 
 
@@ -42,6 +44,7 @@ class AuditEvent:
     agent_id: str
     tool: str
     status: str
+    occurred_at: datetime | None = None
     model_id: str = ""
     arguments_sha256: str = ""
     arguments: Mapping[str, Any] | None = None
@@ -72,6 +75,7 @@ def json_audit_sink(path: str):
             "agent_id": event.agent_id,
             "tool": event.tool,
             "status": event.status,
+            "occurred_at": event.occurred_at.isoformat() if event.occurred_at else None,
             "model_id": event.model_id,
             "arguments_sha256": event.arguments_sha256,
             "arguments": _plain(event.arguments),
@@ -102,11 +106,13 @@ class AgentGateway:
         manifest: RunManifest | None = None,
         model_id: str = "",
         audit_sink=None,
+        clock: Clock = SystemClock(),
     ):
         self.allowed_tools = set(allowed_tools)
         self.manifest = manifest
         self.model_id = model_id
         self.audit_sink = audit_sink
+        self.clock = clock
         self.audit_events: list[AuditEvent] = []
 
     def execute(self, request: AgentRequest) -> AgentResult:
@@ -144,6 +150,7 @@ class AgentGateway:
             agent_id=request.agent_id,
             tool=request.tool,
             status=result.status,
+            occurred_at=self.clock.now(),
             model_id=self.model_id,
             arguments_sha256=_digest(request.arguments),
             arguments=_snapshot(request.arguments),
