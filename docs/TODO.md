@@ -16,7 +16,7 @@
 ## M3 数据门户
 
 - [x] 同一时间戳多修订版本的 PIT 查询已按 `available_at` 取最新可见版本。
-- [ ] `QualityEventCollector` 已记录 block 事件；仍需接入 warn/pass 事件、持久化与策略隔离策略。
+- [x] `QualityEventCollector` 已支持 pass/warn/block 分级校验、JSONL 持久化与按策略隔离查询。
 - [x] 已沉淀 `tests/contract/test_market_data_port.py`，后续 CSV/Parquet/DuckDB 适配器可直接参数化接入。
 
 ## M4 回测器

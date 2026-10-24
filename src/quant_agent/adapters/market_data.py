@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
+import json
+from pathlib import Path
 from typing import Mapping
 
 
@@ -38,11 +40,40 @@ class DataUnavailable(Exception):
 
 
 class QualityEventCollector:
-    def __init__(self) -> None:
-        self.events: list[QualityEvent] = []
+    QUALITY_LEVELS = frozenset({"pass", "warn", "block"})
 
-    def record(self, event: QualityEvent) -> None:
+    def __init__(self, persist_path: str | Path | None = None) -> None:
+        self.events: list[QualityEvent] = []
+        self._events_by_strategy: dict[str, list[QualityEvent]] = {}
+        self._persist_path = Path(persist_path) if persist_path is not None else None
+
+    def record(self, event: QualityEvent, strategy_id: str | None = None) -> None:
+        if event.level not in self.QUALITY_LEVELS:
+            raise ValueError(f"quality level must be one of {sorted(self.QUALITY_LEVELS)}")
         self.events.append(event)
+        if strategy_id is not None:
+            self._events_by_strategy.setdefault(strategy_id, []).append(event)
+        if self._persist_path is not None:
+            record = {
+                "level": event.level,
+                "reason_code": event.reason_code,
+                "symbol": event.symbol,
+                "as_of": event.as_of.isoformat(),
+                "message": event.message,
+            }
+            if strategy_id is not None:
+                record["strategy_id"] = strategy_id
+            with self._persist_path.open("a", encoding="utf-8") as output:
+                output.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+    def by_level(self) -> dict[str, list[QualityEvent]]:
+        partitioned: dict[str, list[QualityEvent]] = {}
+        for event in self.events:
+            partitioned.setdefault(event.level, []).append(event)
+        return partitioned
+
+    def for_strategy(self, strategy_id: str) -> list[QualityEvent]:
+        return list(self._events_by_strategy.get(strategy_id, ()))
 
 
 class InMemoryMarketDataPort:

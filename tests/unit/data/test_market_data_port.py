@@ -81,3 +81,61 @@ def test_quality_event_collector_records_block_event(tmp_path):
 
     assert len(collector.events) == 1
     assert collector.events[0].reason_code == "MISSING_REQUIRED_BAR"
+
+
+def test_quality_event_collector_validates_and_partitions_levels(tmp_path):
+    from quant_agent.adapters.market_data import QualityEvent, QualityEventCollector
+
+    collector = QualityEventCollector()
+    warn = QualityEvent("warn", "LATE_DATA", "sh600519", AS_OF, "late")
+    passed = QualityEvent("pass", "DATA_AVAILABLE", "sh600519", AS_OF, "available")
+
+    collector.record(warn)
+    collector.record(passed)
+
+    assert collector.by_level() == {"pass": [passed], "warn": [warn]}
+    with pytest.raises(ValueError, match="quality level"):
+        collector.record(
+            QualityEvent("invalid", "BAD_LEVEL", "sh600519", AS_OF, "invalid")
+        )
+
+
+def test_quality_events_persist_as_jsonl(tmp_path):
+    import json
+    import os
+
+    from quant_agent.adapters.market_data import QualityEvent, QualityEventCollector
+
+    path = os.path.join(tmp_path, "quality.jsonl")
+    collector = QualityEventCollector(persist_path=path)
+    event = QualityEvent("warn", "LATE_DATA", "sh600519", AS_OF, "late data")
+
+    collector.record(event)
+
+    with open(path, encoding="utf-8") as output:
+        persisted = json.loads(output.read())
+    assert persisted == {
+        "level": "warn",
+        "reason_code": "LATE_DATA",
+        "symbol": "sh600519",
+        "as_of": AS_OF.isoformat(),
+        "message": "late data",
+    }
+
+
+def test_quality_events_are_isolated_by_strategy(tmp_path):
+    import os
+
+    from quant_agent.adapters.market_data import QualityEvent, QualityEventCollector
+
+    path = os.path.join(tmp_path, "quality.jsonl")
+    collector = QualityEventCollector(persist_path=path)
+    tail = QualityEvent("warn", "LATE_DATA", "sh600519", AS_OF, "tail")
+    risk = QualityEvent("pass", "DATA_AVAILABLE", "sh600519", AS_OF, "risk")
+
+    collector.record(tail, strategy_id="tail_momentum_overnight")
+    collector.record(risk, strategy_id="risk_review")
+
+    assert collector.for_strategy("tail_momentum_overnight") == [tail]
+    assert collector.for_strategy("risk_review") == [risk]
+    assert collector.for_strategy("unknown") == []
