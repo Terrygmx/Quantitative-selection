@@ -141,3 +141,38 @@ def test_sell_settled_routes_market_snapshot_through_rules(engine):
     engine.sell_settled(D3, Decimal("10.40"), timestamp=TS3)
 
     assert captured == {"buy": "dict", "sell": "MarketSnapshot"}
+
+
+def test_non_lot_buy_is_rejected_by_backtest_path(engine, basic_config):
+
+    engine.config = BacktestConfig(
+        initial_cash=basic_config.initial_cash,
+        buy_quantity=150,
+        commission_rate=basic_config.commission_rate,
+        stamp_tax_rate=basic_config.stamp_tax_rate,
+        slippage_rate=basic_config.slippage_rate,
+    )
+
+    events = engine.run()
+
+    assert [event.kind for event in events] == ["SIGNAL", "ORDER", "REJECTION"]
+    assert events[-1].rejection.code == "INVALID_LOT"
+    assert engine.cash == basic_config.initial_cash
+    assert engine.position.unsettled_buy_qty == 0
+
+
+def test_backtest_sell_allows_odd_lot_remainder(engine, basic_config):
+    engine.run()
+    engine.config = BacktestConfig(
+        initial_cash=basic_config.initial_cash,
+        buy_quantity=50,
+        commission_rate=basic_config.commission_rate,
+        stamp_tax_rate=basic_config.stamp_tax_rate,
+        slippage_rate=basic_config.slippage_rate,
+    )
+
+    events = engine.sell_settled(D3, Decimal("10.40"), timestamp=TS3)
+
+    assert [event.kind for event in events] == ["ORDER", "FILL"]
+    assert events[-1].fill.quantity == 50
+    assert engine.position.settled_qty == 50

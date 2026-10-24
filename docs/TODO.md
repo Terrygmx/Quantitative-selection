@@ -5,7 +5,7 @@
 ## M1 领域核心
 
 - [x] `RunManifest` 工厂与 Agent 审计事件均已接入可替换 `Clock`。
-- [ ] 将 `Order.validate_quantity` 接入交易规则与回测下单路径；当前领域模型已支持 `Instrument.lot_size` 与卖出零股剩余量校验。
+- [x] `Order.validate_quantity` 已接入交易规则与回测下单路径，覆盖非整手买入拒绝和卖出零股剩余量。
 
 ## M2 A 股规则
 
