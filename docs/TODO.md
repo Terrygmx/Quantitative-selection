@@ -21,8 +21,8 @@
 
 ## M4 回测器
 
-- [ ] 订单状态机已接入 `BacktestEngine` 的买入、卖出与结算路径；引擎仍是单票三日金样本，需改为多标的通用事件时钟。
-- [ ] 卖出订单已接入 `TradingRulesPlugin`、`MarketSnapshot` 与显式 ORDER/REJECTION 事件；多标的订单状态机仍待迁移。
+- [x] `MultiInstrumentBacktestEngine` 已按统一日期事件时钟驱动多标的订单、成交与状态机；旧单票金样本引擎保留为回归夹具。
+- [ ] 卖出订单已接入 `TradingRulesPlugin`、`MarketSnapshot` 与显式 ORDER/REJECTION 事件；多标的卖出、现金约束与持仓账本仍待补齐。
 - [x] 基础净值、最大回撤、夏普、胜率、换手与逐笔成交数量已可计算，夏普支持声明样本频率并年化，回测可导出 JSON 兼容逐笔明细。
 
 ## M5 插件与尾盘动量

@@ -43,6 +43,23 @@ class FillRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class MultiInstrumentBacktestConfig(BacktestConfig):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class MultiInstrumentEvent:
+    kind: str
+    as_of: datetime
+    order: Order | None = None
+    fill: FillRecord | None = None
+
+
+MultiBars = Mapping[str, list[Mapping[str, object]]]
+MultiInstruments = Mapping[str, Instrument]
+
+
+@dataclass(frozen=True, slots=True)
 class Event:
     kind: str
     as_of: datetime
@@ -254,3 +271,81 @@ class BacktestEngine:
 
     def same_bar_close_signal_and_fill(self, day: date, close: Decimal) -> None:
         raise ValueError("same bar close signal and fill is forbidden")
+
+
+class MultiInstrumentBacktestEngine:
+    def __init__(
+        self,
+        bars: MultiBars,
+        instruments: MultiInstruments,
+        config: BacktestConfig,
+        rules: TradingRulesPlugin,
+    ):
+        self.bars = {symbol: list(items) for symbol, items in bars.items()}
+        self.instruments = dict(instruments)
+        self.config = config
+        self.rules = rules
+        self.cash = config.initial_cash
+        self.order_states = OrderStateMachine()
+        self._orders: list[Order] = []
+        self._fills: list[FillRecord] = []
+
+    def run(self) -> list[MultiInstrumentEvent]:
+        events: list[MultiInstrumentEvent] = []
+        dates = self._ordered_dates()
+        for day in dates:
+            session_open = datetime(day.year, day.month, day.day, 9, 31, tzinfo=CN_MARKET_TZ)
+            events.append(MultiInstrumentEvent("SESSION_OPEN", session_open))
+            for symbol in sorted(self.bars):
+                bar = next((item for item in self.bars[symbol] if item["date"] == day), None)
+                if bar is None:
+                    continue
+                event = self._trade_symbol(symbol, bar, session_open)
+                events.extend(event)
+            events.append(MultiInstrumentEvent("SESSION_CLOSE", session_open))
+        return events
+
+    def _trade_symbol(
+        self, symbol: str, bar: Mapping[str, object], timestamp: datetime
+    ) -> list[MultiInstrumentEvent]:
+        instrument = self.instruments[symbol]
+        order = Order(
+            id=f"order-{symbol}-{len(self._orders) + 1}",
+            symbol=symbol,
+            side="buy",
+            quantity=self.config.buy_quantity,
+            limit_price=Decimal(str(bar["open"])),
+            created_at=timestamp,
+        )
+        self._orders.append(order)
+        self.order_states.submit(PendingOrder(order.id, order.created_at))
+        events = [MultiInstrumentEvent("ORDER", timestamp, order=order)]
+        snapshot = MarketSnapshot(
+            instrument=instrument,
+            last=Decimal(str(bar["open"])),
+            previous_close=Decimal(str(bar["previous_close"])),
+            tradable=instrument.status == "Active",
+        )
+        portfolio = RulesPortfolio({})
+        rejections = self.rules.validate_order(order, portfolio, snapshot)
+        if rejections:
+            self.order_states.reject(order.id, rejections[0].code, timestamp)
+            return events
+        fill_price = Decimal(str(bar["open"])) * (1 + self.config.slippage_rate)
+        gross = fill_price * order.quantity
+        fee = gross * self.config.commission_rate
+        self.cash -= gross + fee
+        self.order_states.fill(order.id, timestamp)
+        fill = FillRecord(order.id, "buy", fill_price, order.quantity, fee, timestamp)
+        self._fills.append(fill)
+        events.append(MultiInstrumentEvent("FILL", timestamp, fill=fill))
+        return events
+
+    def _ordered_dates(self) -> list[date]:
+        dates = {
+            item["date"]
+            for items in self.bars.values()
+            for item in items
+            if isinstance(item.get("date"), date)
+        }
+        return sorted(dates)
