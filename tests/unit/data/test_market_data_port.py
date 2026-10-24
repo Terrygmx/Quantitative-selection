@@ -68,3 +68,16 @@ def test_latest_visible_revision_wins_for_same_timestamp():
     result = port.bars("sh600519", as_of=AS_OF)
 
     assert [item.close for item in result] == [9.1]
+
+
+def test_quality_event_collector_records_block_event(tmp_path):
+    from quant_agent.adapters.market_data import QualityEventCollector
+
+    collector = QualityEventCollector()
+    port = InMemoryMarketDataPort(bars=[], quality_events=collector)
+
+    with pytest.raises(port.DataUnavailable):
+        port.bars("sh600519", as_of=AS_OF)
+
+    assert len(collector.events) == 1
+    assert collector.events[0].reason_code == "MISSING_REQUIRED_BAR"

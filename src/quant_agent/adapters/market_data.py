@@ -37,11 +37,20 @@ class DataUnavailable(Exception):
         super().__init__(event.message)
 
 
+class QualityEventCollector:
+    def __init__(self) -> None:
+        self.events: list[QualityEvent] = []
+
+    def record(self, event: QualityEvent) -> None:
+        self.events.append(event)
+
+
 class InMemoryMarketDataPort:
     DataUnavailable = DataUnavailable
 
-    def __init__(self, bars: Iterable[Bar]):
+    def __init__(self, bars: Iterable[Bar], quality_events: QualityEventCollector | None = None):
         self._bars: Mapping[str, list[Bar]] = {}
+        self.quality_events = quality_events
         for item in bars:
             self._bars.setdefault(item.instrument, []).append(item)
         for items in self._bars.values():
@@ -57,13 +66,14 @@ class InMemoryMarketDataPort:
         for item in visible:
             latest_by_timestamp[item.timestamp] = item
         if not visible:
-            raise DataUnavailable(
-                QualityEvent(
-                    level="block",
-                    reason_code="MISSING_REQUIRED_BAR",
-                    symbol=instrument,
-                    as_of=as_of,
-                    message=f"No bar available for {instrument} as of {as_of.isoformat()}",
-                )
+            event = QualityEvent(
+                level="block",
+                reason_code="MISSING_REQUIRED_BAR",
+                symbol=instrument,
+                as_of=as_of,
+                message=f"No bar available for {instrument} as of {as_of.isoformat()}",
             )
+            if self.quality_events is not None:
+                self.quality_events.record(event)
+            raise DataUnavailable(event)
         return [latest_by_timestamp[timestamp] for timestamp in sorted(latest_by_timestamp)]
