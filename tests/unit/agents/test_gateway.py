@@ -225,3 +225,21 @@ def test_audit_event_uses_injected_clock():
     gateway.execute(AgentRequest(agent_id="research", tool="read_dataset", arguments={}))
 
     assert gateway.audit_events[-1].occurred_at == clock.now()
+
+
+def test_validate_output_uses_locked_jsonschema_draft2020():
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": ["summary"],
+        "properties": {"summary": {"type": "string", "minLength": 1}},
+        "additionalProperties": False,
+    }
+    gateway = AgentGateway(allowed_tools=set())
+
+    gateway.validate_output({"summary": "ok"}, schema=schema)
+
+    with pytest.raises(ValueError, match="JSON schema"):
+        gateway.validate_output({"summary": ""}, schema=schema)
+    with pytest.raises(ValueError, match="JSON schema"):
+        gateway.validate_output({"summary": "ok", "extra": 1}, schema=schema)

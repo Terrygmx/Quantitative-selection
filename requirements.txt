@@ -1,5 +1,6 @@
-# 本项目运行时仅依赖 Python 标准库，无需安装任何第三方 Python 包。
-# 测试/CI 开发依赖见 requirements-dev.txt；不要把测试工具加入运行时依赖。
+# Agent JSON Schema 运行时校验需要 jsonschema；其余核心代码仍仅使用标准库。
+# 测试/CI 开发依赖见 requirements-dev.txt。
+jsonschema==4.25.1
 #
 # 外部依赖（非 Python 包，需另行具备）：
 #   1) Python 3.8+（推荐 3.10+）

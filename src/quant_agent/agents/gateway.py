@@ -10,6 +10,8 @@ import logging
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from jsonschema import Draft202012Validator
+
 from quant_agent.domain.clock import Clock, SystemClock
 from quant_agent.domain.models import RunManifest
 
@@ -176,26 +178,8 @@ class AgentGateway:
                 raise ValueError("structured output with summary is required")
             return
 
-        expected_type = schema.get("type", "object")
-        if expected_type != "object" or not isinstance(output, Mapping):
-            raise ValueError("structured output type must be object")
-        for field in schema.get("required", []):
-            if field not in output:
-                raise ValueError(f"structured output missing required field: {field}")
-        properties = schema.get("properties", {})
-        type_map = {
-            "object": dict,
-            "array": list,
-            "string": str,
-            "number": (int, float),
-            "boolean": bool,
-        }
-        for field, field_schema in properties.items():
-            if field not in output:
-                continue
-            expected = field_schema.get("type")
-            python_type = type_map.get(expected)
-            if python_type and not isinstance(output[field], python_type):
-                raise ValueError(
-                    f"structured output field {field} has invalid type {expected}"
-                )
+        validator = Draft202012Validator(schema)
+        errors = sorted(validator.iter_errors(output), key=lambda error: list(error.path))
+        if errors:
+            messages = "; ".join(error.message for error in errors)
+            raise ValueError(f"JSON schema validation failed: {messages}")
