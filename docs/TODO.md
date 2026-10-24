@@ -21,7 +21,7 @@
 
 ## M4 回测器
 
-- [ ] 当前 `BacktestEngine` 是单票三日金样本驱动，需重构为通用事件时钟和订单状态机。
+- [ ] 订单状态机已支持 `PENDING → FILLED/REJECTED`；`BacktestEngine` 仍是单票三日金样本，需改为多标的通用事件时钟并全面使用状态机。
 - [ ] 卖出订单已接入 `TradingRulesPlugin`、`MarketSnapshot` 与显式 ORDER/REJECTION 事件；多标的订单状态机仍待迁移。
 - [ ] 基础净值、最大回撤、夏普、胜率、换手与逐笔成交数量已可计算；仍需年化、样本频率、逐笔明细导出与回测事件接线。
 
