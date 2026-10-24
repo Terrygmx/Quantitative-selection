@@ -6,6 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Mapping
 
 from quant_agent.domain.models import Instrument, Order
+from quant_agent.rules.calendar import StaticTradingCalendar
 
 
 CHINEXT_20_PERCENT_START = date(2020, 8, 24)
@@ -39,22 +40,26 @@ class Portfolio:
 
 
 class TradingRulesPlugin:
-    """Date-effective A-share trading rules. The first version ignores holidays."""
+    def __init__(self, calendar: StaticTradingCalendar | None = None):
+        self.calendar = calendar
 
     def _new_listing_without_limit(self, instrument: Instrument, day: date) -> bool:
-        if day.weekday() >= 5:
+        if not self._is_trading_day(day):
             return False
         if instrument.board not in ("STAR", "ChiNext"):
             return False
         trading_days = 0
         current = instrument.listing_date
         while current <= day:
-            if current.weekday() < 5:
+            if self._is_trading_day(current):
                 trading_days += 1
                 if current == day:
                     return trading_days <= 5
             current += timedelta(days=1)
         return False
+
+    def _is_trading_day(self, day: date) -> bool:
+        return self.calendar.is_trading_day(day) if self.calendar else day.weekday() < 5
 
     def _limit_percent(self, instrument: Instrument, day: date) -> Decimal:
         if instrument.board == "STAR":
