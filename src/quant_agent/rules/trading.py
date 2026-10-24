@@ -6,7 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Mapping
 
 from quant_agent.domain.models import Instrument, Order
-from quant_agent.rules.calendar import StaticTradingCalendar
+from quant_agent.rules.calendar import TradingCalendar
 
 
 CHINEXT_20_PERCENT_START = date(2020, 8, 24)
@@ -40,7 +40,7 @@ class Portfolio:
 
 
 class TradingRulesPlugin:
-    def __init__(self, calendar: StaticTradingCalendar | None = None):
+    def __init__(self, calendar: TradingCalendar | None = None):
         self.calendar = calendar
 
     def _new_listing_without_limit(self, instrument: Instrument, day: date) -> bool:

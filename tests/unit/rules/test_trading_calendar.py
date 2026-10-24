@@ -71,3 +71,31 @@ def test_trading_rules_use_calendar_not_weekend_approximation():
         Decimal("10.00"),
         date(2024, 2, 8),
     ) is None
+
+
+def test_builtin_sse_calendar_spans_multiple_years_and_cross_year_boundaries():
+    calendar = StaticTradingCalendar.for_sse()
+
+    for day in (date(2023, 1, 3), date(2024, 1, 2), date(2025, 1, 2)):
+        assert calendar.is_trading_day(day)
+    assert calendar.next_trading_day(date(2024, 12, 31)) == date(2025, 1, 2)
+    assert calendar.previous_trading_day(date(2024, 1, 2)) == date(2023, 12, 29)
+    assert not calendar.is_trading_day(date(2023, 1, 1))
+    assert not calendar.is_trading_day(date(2025, 10, 1))
+
+
+def test_calendar_protocol_is_replaceable():
+    class WeekdayCalendar:
+        def is_trading_day(self, day):
+            return day.weekday() < 5
+
+        def next_trading_day(self, day):
+            return None
+
+        def previous_trading_day(self, day):
+            return None
+
+    from quant_agent.rules.trading import TradingRulesPlugin
+
+    plugin = TradingRulesPlugin(WeekdayCalendar())
+    assert plugin._is_trading_day(date(2024, 2, 12))
