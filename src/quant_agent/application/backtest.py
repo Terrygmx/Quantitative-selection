@@ -155,14 +155,12 @@ class BacktestEngine:
         )
 
     def _validate_order(self, order: Order, bar: Mapping[str, object]) -> list[Rejection]:
-        market = {
-            order.symbol: {
-                "last": Decimal(str(bar["open"])),
-                "previous_close": Decimal(str(bar["previous_close"])),
-                "instrument": self.instrument,
-                "tradable": self.instrument.status == "Active",
-            }
-        }
+        market = MarketSnapshot(
+            instrument=self.instrument,
+            last=Decimal(str(bar["open"])),
+            previous_close=Decimal(str(bar["previous_close"])),
+            tradable=self.instrument.status == "Active",
+        )
         return self.rules.validate_order(order, self._rules_portfolio(), market)
 
     def _rules_portfolio(self) -> RulesPortfolio:

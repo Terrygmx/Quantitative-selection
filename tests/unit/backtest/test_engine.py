@@ -141,7 +141,7 @@ def test_sell_settled_routes_market_snapshot_through_rules(engine):
     engine.run()
     engine.sell_settled(D3, Decimal("10.40"), timestamp=TS3)
 
-    assert captured == {"buy": "dict", "sell": "MarketSnapshot"}
+    assert captured == {"buy": "MarketSnapshot", "sell": "MarketSnapshot"}
 
 
 def test_non_lot_buy_is_rejected_by_backtest_path(engine, basic_config):
@@ -177,3 +177,24 @@ def test_backtest_sell_allows_odd_lot_remainder(engine, basic_config):
     assert [event.kind for event in events] == ["ORDER", "FILL"]
     assert events[-1].fill.quantity == 50
     assert engine.position.settled_qty == 50
+
+
+def test_all_backtest_orders_use_market_snapshot(engine):
+    from quant_agent.rules.trading import MarketSnapshot
+
+    captured = []
+    original_validate = engine.rules.validate_order
+
+    def validate(order, portfolio, market):
+        captured.append((order.side, type(market).__name__))
+        return original_validate(order, portfolio, market)
+
+    engine.rules.validate_order = validate
+    engine.run()
+    engine.sell_settled(D3, Decimal("10.40"), timestamp=TS3)
+
+    assert captured == [
+        ("buy", "MarketSnapshot"),
+        ("sell", "MarketSnapshot"),
+        ("sell", "MarketSnapshot"),
+    ]
