@@ -320,3 +320,53 @@ def test_simulated_execution_rejects_sell_while_suspended():
     assert orders[0]["status"] == "REJECTED"
     assert orders[0]["reason_code"] == "SUSPENDED"
     assert paper.position("sh600176").settled_qty == 100
+
+
+def test_simulated_execution_fills_after_hours_at_closing_price():
+    """STAR/ChiNext after-hours orders fill exactly at the close, with no
+    slippage: the rules layer is the single pricing adjudicator."""
+    config = PaperExecutionConfig(
+        initial_cash=Decimal("100000.00"),
+        commission_rate=Decimal("0.0003"),
+        stamp_tax_rate=Decimal("0.0005"),
+        slippage_rate=Decimal("0.001"),
+        buy_quantity=100,
+    )
+    star = Instrument(
+        symbol="sh688001",
+        exchange="SSE",
+        board="STAR",
+        status="Active",
+        listing_date=date(2019, 7, 22),
+        tick=Decimal("0.01"),
+        lot_size=100,
+    )
+    paper = SimulatedPaperExecution(
+        config=config,
+        instruments={"sh688001": star},
+        rules=TradingRulesPlugin(StaticTradingCalendar.for_exchange("SSE")),
+    )
+    strategy_config = {
+        "config_hash": "hash-1",
+        "universe": ["sh688001"],
+        "market": {
+            "sh688001": {
+                "last": "10.00",
+                "previous_close": "10.00",
+                "tradable": True,
+            }
+        },
+    }
+
+    orders = paper.execute(
+        "tail_momentum_overnight",
+        strategy_config,
+        datetime(2026, 10, 26, 15, 10, tzinfo=CN_TZ),
+    )
+
+    assert orders[0]["status"] == "FILLED"
+    assert Decimal(str(orders[0]["price"])) == Decimal("10.00")
+    assert Decimal(str(orders[0]["fee"])) == Decimal("0.3000")
+    assert paper.cash == Decimal("100000.00") - (
+        Decimal("10.00") * 100 + Decimal("0.3000")
+    )

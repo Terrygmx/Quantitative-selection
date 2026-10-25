@@ -89,6 +89,16 @@ class TradingRulesPlugin:
             and AFTER_HOURS_START <= clock <= AFTER_HOURS_END
         )
 
+    def is_after_hours_fixed_price_session(
+        self, instrument: Instrument, as_of: datetime
+    ) -> bool:
+        """Whether `as_of` falls in the STAR/ChiNext after-hours fixed-price
+        session, where fills happen exactly at the closing price."""
+        local_clock = (
+            as_of.astimezone(CN_MARKET_TZ).time().replace(tzinfo=None)
+        )
+        return self._in_after_hours_fixed_price_session(instrument, local_clock)
+
     def tradeability(self, instrument: Instrument, as_of: datetime) -> Tradeability:
         local_time = as_of.astimezone(CN_MARKET_TZ)
         if instrument.status != "Active":

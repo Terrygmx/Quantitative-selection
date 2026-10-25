@@ -243,7 +243,7 @@ class SimulatedPaperExecution:
             return self._reject_intent(
                 instrument.symbol, "buy", size, "INVALID_PRICE", timestamp
             )
-        fill_price = self.core.costs.fill_price(instrument, market.last, "buy")
+        fill_price = self.core.order_price(instrument, market.last, "buy", timestamp)
         order = self._create_order(
             instrument.symbol, "buy", size, fill_price, timestamp
         )
@@ -265,7 +265,7 @@ class SimulatedPaperExecution:
             "tradable": self._tradable.get(instrument.symbol, True),
         }
         market = self._market_snapshot(instrument, snapshot)
-        fill_price = self.core.costs.fill_price(instrument, market.last, "sell")
+        fill_price = self.core.order_price(instrument, market.last, "sell", timestamp)
         order = self._create_order(
             instrument.symbol, "sell", quantity, fill_price, timestamp
         )

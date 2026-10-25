@@ -346,8 +346,8 @@ class MultiInstrumentBacktestEngine:
             symbol=symbol,
             side="buy",
             quantity=self.config.buy_quantity,
-            limit_price=self._costs.fill_price(
-                instrument, market.last, "buy"
+            limit_price=self.core.order_price(
+                instrument, market.last, "buy", timestamp
             ),
             created_at=timestamp,
         )
@@ -400,8 +400,8 @@ class MultiInstrumentBacktestEngine:
             symbol=symbol,
             side="sell",
             quantity=quantity,
-            limit_price=self._costs.fill_price(
-                instrument, market.last, "sell"
+            limit_price=self.core.order_price(
+                instrument, market.last, "sell", timestamp
             ),
             created_at=timestamp,
         )
