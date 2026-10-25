@@ -12,6 +12,7 @@ from typing import Any, Mapping
 
 from jsonschema import Draft202012Validator
 
+from quant_agent.agents.roles import AgentRole
 from quant_agent.domain.clock import Clock, SystemClock
 from quant_agent.domain.models import RunManifest
 
@@ -109,15 +110,37 @@ class AgentGateway:
         model_id: str = "",
         audit_sink=None,
         clock: Clock = SystemClock(),
+        role_bindings: Mapping[str, "AgentRole"] | None = None,
     ):
         self.allowed_tools = set(allowed_tools)
         self.manifest = manifest
         self.model_id = model_id
         self.audit_sink = audit_sink
         self.clock = clock
+        self.role_bindings = dict(role_bindings) if role_bindings else None
         self.audit_events: list[AuditEvent] = []
 
     def execute(self, request: AgentRequest) -> AgentResult:
+        if self.role_bindings is not None:
+            role = self.role_bindings.get(request.agent_id)
+            if role is None:
+                result = AgentResult(
+                    status="denied",
+                    agent_id=request.agent_id,
+                    tool=request.tool,
+                    reason_code="AGENT_ROLE_UNKNOWN",
+                )
+                self._audit(request, result)
+                return result
+            if not role.allows(request.tool):
+                result = AgentResult(
+                    status="denied",
+                    agent_id=request.agent_id,
+                    tool=request.tool,
+                    reason_code="ROLE_TOOL_NOT_ALLOWED",
+                )
+                self._audit(request, result)
+                return result
         if request.tool in FORBIDDEN_ALWAYS:
             result = AgentResult(
                 status="denied",
