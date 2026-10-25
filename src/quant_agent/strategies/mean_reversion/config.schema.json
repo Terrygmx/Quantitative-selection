@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mean reversion (liquid) configuration",
+  "type": "object",
+  "required": ["universe"],
+  "properties": {
+    "universe": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "minItems": 1
+    },
+    "deviation_threshold": {"type": "number", "minimum": 0.005},
+    "liquidity_amount_yi": {"type": "number", "minimum": 0},
+    "holding_days": {"type": "integer", "minimum": 1, "maximum": 60}
+  },
+  "additionalProperties": false
+}
