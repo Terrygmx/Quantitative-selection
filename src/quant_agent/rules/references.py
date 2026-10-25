@@ -67,7 +67,7 @@ RULE_REFERENCES: dict[str, RuleReference] = {
             document_number="上证发〔2026〕41号",
             url=_SSE_TRADING_RULES_2026,
             verified_online=True,
-            note=_VERIFIED + "：3.1.4 原文；A股不在当日回转交易品种之列",
+            note=_VERIFIED + "：SSE 3.1.4 原文；SZSE 3.1.4 原文逐条一致（2026-10-25）",
         ),
         RuleReference(
             area="lot_and_tick",
@@ -77,7 +77,7 @@ RULE_REFERENCES: dict[str, RuleReference] = {
             document_number="上证发〔2026〕41号",
             url=_SSE_TRADING_RULES_2026,
             verified_online=True,
-            note=_VERIFIED + "：3.3.8 与 3.3.11 原文",
+            note=_VERIFIED + "：SSE 3.3.8 与 3.3.11 原文；SZSE 3.3.8 与 3.3.11 原文逐条一致（2026-10-25）",
         ),
         RuleReference(
             area="continuous_auction_sessions",
@@ -88,7 +88,7 @@ RULE_REFERENCES: dict[str, RuleReference] = {
             url=_SSE_TRADING_RULES_2026,
             verified_online=True,
             note=_VERIFIED
-            + "：3.3.1 申报时间与 2.4.2 时段划分原文；本平台以申报接受窗口（9:30-11:30、13:00-15:00）判定可交易，14:57-15:00 收盘集合竞价按连续撮合近似（建模简化）",
+            + "：SSE 3.3.1 与 2.4.2 原文；SZSE 2.3.2 原文逐条一致（9:30-11:30、13:00-14:57 连续竞价，14:57-15:00 收盘集合竞价）；本平台以申报接受窗口判定可交易，收盘集合竞价按连续撮合近似（建模简化）",
         ),
         RuleReference(
             area="after_hours_fixed_price",
@@ -99,7 +99,7 @@ RULE_REFERENCES: dict[str, RuleReference] = {
             url=_SSE_TRADING_RULES_2026,
             verified_online=True,
             note=_VERIFIED
-            + "：3.7.1 适用范围、3.7.2 时段与停牌、3.7.3 申报窗口与撤销、3.7.5 限价不等式、3.7.7 当日有效、3.7.8 收盘价逐笔撮合原文；扩至全部 A 股与沪深 ETF 另经证监会官方发布确认（沪深一致；未逐行解析深交所 docx）",
+            + "：3.7.1 适用范围、3.7.2 时段与停牌、3.7.3 申报窗口与撤销、3.7.5 限价不等式、3.7.7 当日有效、3.7.8 收盘价逐笔撮合原文；扩至全部 A 股与沪深 ETF 另经证监会官方发布确认；深交所原文 3.6.1–3.6.5 已逐条核对（SZSE 2026 修订 PDF，2026-10-25），申报窗口深市自 9:15 起（已按交易所区分实现）",
         ),
         RuleReference(
             area="trading_calendar_holidays",

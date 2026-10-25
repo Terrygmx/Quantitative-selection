@@ -631,3 +631,34 @@ def test_pre_reform_chinext_listings_keep_the_band_within_first_days():
 
     assert band is not None
     assert (band.floor, band.ceiling) == (Decimal("9.00"), Decimal("11.00"))
+
+
+def test_szse_after_hours_submission_opens_at_0915():
+    """SZSE 2026 rules 3.6.3 accept after-hours submissions from 9:15
+    (SSE's window starts at 9:30), verified against the SZSE original text
+    on 2026-10-25."""
+    rules = TradingRulesPlugin(StaticTradingCalendar.for_exchange("SZSE"))
+    chinext = instrument(
+        symbol="sz300001", exchange="SZSE", board="ChiNext"
+    )
+
+    at_0920 = rules.after_hours_submission_gate(
+        chinext, datetime(2026, 9, 15, 9, 20, tzinfo=CN_TZ)
+    )
+    assert at_0920 is None
+
+    at_0905 = rules.after_hours_submission_gate(
+        chinext, datetime(2026, 9, 15, 9, 5, tzinfo=CN_TZ)
+    )
+    assert at_0905 is not None
+    assert at_0905.code == "OUTSIDE_AFTER_HOURS_SUBMISSION_WINDOW"
+
+    # The SSE window still starts at 9:30.
+    sse_star = instrument(symbol="sh688001", board="STAR", exchange="SSE")
+    sse_gate = TradingRulesPlugin(
+        StaticTradingCalendar.for_exchange("SSE")
+    ).after_hours_submission_gate(
+        sse_star, datetime(2026, 9, 15, 9, 20, tzinfo=CN_TZ)
+    )
+    assert sse_gate is not None
+    assert sse_gate.code == "OUTSIDE_AFTER_HOURS_SUBMISSION_WINDOW"

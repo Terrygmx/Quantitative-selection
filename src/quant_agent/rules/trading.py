@@ -117,12 +117,18 @@ class TradingRulesPlugin:
         if not self._is_trading_day(local.date()):
             return Rejection("NON_TRADING_DAY", "")
         clock = local.time().replace(tzinfo=None)
-        morning = time(9, 30) <= clock <= time(11, 30)
+        # SZSE 2026 rules 3.6.3 accept submissions from 9:15 (the opening
+        # call auction), SSE 3.7.3 from 9:30.
+        morning_start = (
+            time(9, 15) if instrument.exchange == "SZSE" else time(9, 30)
+        )
+        morning = morning_start <= clock <= time(11, 30)
         afternoon = time(13, 0) <= clock <= time(15, 30)
         if not (morning or afternoon):
             return Rejection(
                 "OUTSIDE_AFTER_HOURS_SUBMISSION_WINDOW",
-                "after-hours orders may be submitted 9:30-11:30 and 13:00-15:30",
+                "after-hours orders may be submitted 9:30-11:30 and 13:00-15:30 "
+                "(SSE) or 9:15-11:30 and 13:00-15:30 (SZSE)",
             )
         return None
 
