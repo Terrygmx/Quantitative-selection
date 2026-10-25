@@ -88,11 +88,17 @@ class ExecutionCore:
         base: Decimal,
         side: str,
         as_of: datetime,
+        session: str = "continuous",
     ) -> Decimal:
         """Single pricing entry for both engines: after-hours fixed-price
-        sessions fill exactly at the close (rules decide), everything else
-        fills at the slipped, tick-quantized price."""
-        if self.rules.is_after_hours_fixed_price_session(instrument, as_of):
+        orders (marked, or submitted inside the session) fill exactly at the
+        close (rules decide); everything else fills at the slipped,
+        tick-quantized price."""
+        after_hours = (
+            session == "after_hours_fixed"
+            or self.rules.is_after_hours_fixed_price_session(instrument, as_of)
+        )
+        if after_hours:
             return base.quantize(instrument.tick, rounding=ROUND_HALF_UP)
         return self.costs.fill_price(instrument, base, side)
 

@@ -377,3 +377,94 @@ def test_continuous_auction_orders_are_not_bound_to_closing_price():
     )
 
     assert rejections == []
+
+
+def after_hours_marked_order(moment, price=Decimal("10.01"), symbol="sh688001", board="STAR", exchange="SSE"):
+    return order(
+        symbol=symbol,
+        limit_price=price,
+        created_at=moment,
+        session="after_hours_fixed",
+    )
+
+
+def test_after_hours_marked_orders_follow_submission_window():
+    rules = TradingRulesPlugin(StaticTradingCalendar.for_exchange("SSE"))
+    star = instrument(symbol="sh688001", board="STAR", exchange="SSE")
+    market = MarketSnapshot(
+        instrument=star, last=Decimal("10.00"), previous_close=Decimal("10.00")
+    )
+
+    # Intraday submission is allowed for STAR/ChiNext; the matching price is
+    # the close, so the limit is not bound to the current last.
+    intraday = rules.validate_order(
+        after_hours_marked_order(datetime(2026, 9, 15, 14, 31, tzinfo=CN_TZ)),
+        portfolio("sh688001"),
+        market,
+    )
+    assert intraday == []
+
+    lunch_break = rules.validate_order(
+        after_hours_marked_order(datetime(2026, 9, 15, 12, 30, tzinfo=CN_TZ)),
+        portfolio("sh688001"),
+        market,
+    )
+    assert [item.code for item in lunch_break] == ["OUTSIDE_AFTER_HOURS_SUBMISSION_WINDOW"]
+
+    pre_open = rules.validate_order(
+        after_hours_marked_order(datetime(2026, 9, 15, 9, 20, tzinfo=CN_TZ)),
+        portfolio("sh688001"),
+        market,
+    )
+    assert [item.code for item in pre_open] == ["OUTSIDE_AFTER_HOURS_SUBMISSION_WINDOW"]
+
+    late = rules.validate_order(
+        after_hours_marked_order(datetime(2026, 9, 15, 15, 35, tzinfo=CN_TZ)),
+        portfolio("sh688001"),
+        market,
+    )
+    assert [item.code for item in late] == ["OUTSIDE_AFTER_HOURS_SUBMISSION_WINDOW"]
+
+
+def test_after_hours_marked_orders_reject_non_eligible_boards():
+    rules = TradingRulesPlugin(StaticTradingCalendar.for_exchange("SSE"))
+    main = instrument(symbol="sh600519", board="MainBoard", exchange="SSE")
+    market = MarketSnapshot(
+        instrument=main, last=Decimal("10.00"), previous_close=Decimal("10.00")
+    )
+
+    rejections = rules.validate_order(
+        after_hours_marked_order(
+            datetime(2026, 9, 15, 14, 31, tzinfo=CN_TZ),
+            symbol="sh600519",
+            board="MainBoard",
+        ),
+        portfolio(),
+        market,
+    )
+
+    assert [item.code for item in rejections] == ["AFTER_HOURS_BOARD_NOT_SUPPORTED"]
+
+
+def test_after_hours_marked_orders_in_session_still_need_closing_price():
+    rules = TradingRulesPlugin(StaticTradingCalendar.for_exchange("SSE"))
+    star = instrument(symbol="sh688001", board="STAR", exchange="SSE")
+    market = MarketSnapshot(
+        instrument=star, last=Decimal("10.00"), previous_close=Decimal("10.00")
+    )
+
+    off_close = rules.validate_order(
+        after_hours_marked_order(datetime(2026, 9, 15, 15, 10, tzinfo=CN_TZ)),
+        portfolio("sh688001"),
+        market,
+    )
+    assert [item.code for item in off_close] == ["INVALID_AFTER_HOURS_PRICE"]
+
+    at_close = rules.validate_order(
+        after_hours_marked_order(
+            datetime(2026, 9, 15, 15, 10, tzinfo=CN_TZ), price=Decimal("10.00")
+        ),
+        portfolio("sh688001"),
+        market,
+    )
+    assert at_close == []

@@ -121,12 +121,15 @@ class Order:
     quantity: int
     limit_price: Decimal
     created_at: datetime
+    session: str = "continuous"
 
     def __post_init__(self) -> None:
         _require_non_empty(self.id, "id")
         _require_non_empty(self.symbol, "symbol")
         if self.side not in ("buy", "sell"):
             raise ValueError("side must be buy or sell")
+        if self.session not in ("continuous", "after_hours_fixed"):
+            raise ValueError("session must be continuous or after_hours_fixed")
         object.__setattr__(self, "limit_price", _parse_decimal(self.limit_price))
         if self.quantity <= 0:
             raise ValueError("quantity must be positive")
@@ -149,6 +152,7 @@ class Order:
             quantity=int(data["quantity"]),
             limit_price=Decimal(data["limit_price"]),
             created_at=_parse_datetime(data["created_at"]),
+            session=str(data.get("session", "continuous")),
         )
 
     def validate_quantity(self, instrument: Instrument, allow_odd_lot: bool = False) -> None:

@@ -175,3 +175,40 @@ def test_order_validate_quantity_uses_instrument_lot_and_allows_odd_sell_remaind
         invalid_200_lot.validate_quantity(instrument_200)
     with pytest.raises(ValueError, match="multiple of"):
         odd_sell.validate_quantity(instrument_100)
+
+
+def test_order_defaults_to_continuous_session_and_validates_values():
+    order = Order(
+        id="ord-1",
+        symbol="sh600519",
+        side="buy",
+        quantity=100,
+        limit_price="10.00",
+        created_at=datetime(2026, 9, 15, 14, 31, tzinfo=timezone.utc),
+    )
+
+    assert order.session == "continuous"
+    assert Order.from_dict(order.to_dict()) == order
+
+    after_hours = Order(
+        id="ord-2",
+        symbol="sh688001",
+        side="buy",
+        quantity=100,
+        limit_price="10.00",
+        created_at=datetime(2026, 9, 15, 14, 31, tzinfo=timezone.utc),
+        session="after_hours_fixed",
+    )
+    assert after_hours.session == "after_hours_fixed"
+    assert Order.from_dict(after_hours.to_dict()) == after_hours
+
+    with pytest.raises(ValueError, match="session"):
+        Order(
+            id="ord-3",
+            symbol="sh688001",
+            side="buy",
+            quantity=100,
+            limit_price="10.00",
+            created_at=datetime(2026, 9, 15, 14, 31, tzinfo=timezone.utc),
+            session="dark-pool",
+        )

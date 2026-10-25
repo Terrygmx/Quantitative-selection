@@ -99,6 +99,31 @@ class TradingRulesPlugin:
         )
         return self._in_after_hours_fixed_price_session(instrument, local_clock)
 
+    def _after_hours_submission_gate(
+        self, instrument: Instrument, as_of: datetime
+    ) -> Rejection | None:
+        """Orders explicitly marked after_hours_fixed may be submitted from
+        9:30-11:30 and 13:00-15:30 and match later at the close."""
+        local = as_of.astimezone(CN_MARKET_TZ)
+        if instrument.status != "Active":
+            return Rejection("INSTRUMENT_NOT_ACTIVE", "")
+        if not self._is_trading_day(local.date()):
+            return Rejection("NON_TRADING_DAY", "")
+        if instrument.board not in AFTER_HOURS_FIXED_PRICE_BOARDS:
+            return Rejection(
+                "AFTER_HOURS_BOARD_NOT_SUPPORTED",
+                "after-hours fixed-price trading is STAR/ChiNext only",
+            )
+        clock = local.time().replace(tzinfo=None)
+        morning = time(9, 30) <= clock <= time(11, 30)
+        afternoon = time(13, 0) <= clock <= time(15, 30)
+        if not (morning or afternoon):
+            return Rejection(
+                "OUTSIDE_AFTER_HOURS_SUBMISSION_WINDOW",
+                "after-hours orders may be submitted 9:30-11:30 and 13:00-15:30",
+            )
+        return None
+
     def tradeability(self, instrument: Instrument, as_of: datetime) -> Tradeability:
         local_time = as_of.astimezone(CN_MARKET_TZ)
         if instrument.status != "Active":
@@ -141,9 +166,16 @@ class TradingRulesPlugin:
     ) -> list[Rejection]:
         if not isinstance(market, MarketSnapshot):
             raise TypeError("market must be a MarketSnapshot")
-        tradeability = self.tradeability(market.instrument, order.created_at)
-        if not tradeability.tradable:
-            return [Rejection(tradeability.reason_code or "NOT_TRADABLE", "")]
+        if order.session == "after_hours_fixed":
+            gate = self._after_hours_submission_gate(
+                market.instrument, order.created_at
+            )
+            if gate is not None:
+                return [gate]
+        else:
+            tradeability = self.tradeability(market.instrument, order.created_at)
+            if not tradeability.tradable:
+                return [Rejection(tradeability.reason_code or "NOT_TRADABLE", "")]
         if market.tradable is False:
             return [Rejection("SUSPENDED", "instrument is not tradable")]
 
