@@ -43,3 +43,31 @@ def test_render_supports_a_custom_title():
     )
     assert text.splitlines()[0] == "Daily report"
     assert "sh600519" in text
+
+
+def test_html_report_is_self_contained_and_escaped():
+    from quant_agent.strategies.reporting import render_signal_report_html
+
+    malicious = '<img src=x onerror="alert(1)">'
+    signals = [
+        Signal(
+            strategy_id="s", version="1", symbol=malicious, side="long",
+            target_weight=0.5, confidence=0.9,
+            valid_from=datetime(2026, 9, 15, tzinfo=timezone.utc),
+            valid_to=datetime(2026, 9, 16, tzinfo=timezone.utc),
+            evidence={},
+        )
+    ]
+
+    html = render_signal_report_html(signals, title="Report & <title>")
+
+    # Self-contained: no external resources.
+    assert "http://" not in html and "https://" not in html and "<script src" not in html
+    # Injected markup is escaped everywhere it appears.
+    assert "<img" not in html
+    assert "&lt;img" in html
+    assert "Report &amp; &lt;title&gt;" in html
+    # Empty input still renders a valid document with the disclaimer.
+    empty = render_signal_report_html([], title="t")
+    assert "No signals." in empty
+    assert "不构成" in empty or "not investment advice" in empty.lower()
