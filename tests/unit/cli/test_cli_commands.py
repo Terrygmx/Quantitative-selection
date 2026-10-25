@@ -246,3 +246,62 @@ def test_backtest_run_window_and_split_are_exclusive(backtest_inputs, capsys):
     )
 
     assert exit_code == 2
+
+
+def write_minute_csv(path):
+    from datetime import datetime, timezone
+
+    rows = []
+    for day, closes in ((D1, ("10.0", "10.5")), (D2, ("10.2", "10.7"))):
+        for hhmm, close in zip(("0931", "1431"), closes):
+            stamp = datetime(
+                day.year, day.month, day.day,
+                int(hhmm[:2]) + 8, int(hhmm[2:]), tzinfo=timezone.utc,
+            )  # 09:31/14:31 Shanghai expressed in UTC
+            rows.append(
+                {
+                    "instrument": "sh600519",
+                    "timestamp": stamp.isoformat(),
+                    "open": close,
+                    "high": close,
+                    "low": close,
+                    "close": close,
+                    "volume": 1000.0,
+                    "amount": 0.0,
+                    "available_at": stamp.isoformat(),
+                }
+            )
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def test_backtest_run_minute_frequency(backtest_inputs, tmp_path, capsys):
+    _, instruments, config = backtest_inputs
+    minute_bars = tmp_path / "minute.csv"
+    write_minute_csv(minute_bars)
+
+    exit_code = backtest_main(
+        ["run", "--bars", str(minute_bars), "--instruments", str(instruments),
+         "--config", str(config), "--frequency", "minute", "--decision", "1431"]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    # sz000001 has no minute bars: skipped; sh600519 fills at both decisions.
+    assert report["summary"]["fill_count"] == 2
+    assert {order["symbol"] for order in report["orders"]} == {"sh600519"}
+
+
+def test_backtest_run_minute_rejects_daily_only_options(backtest_inputs, tmp_path, capsys):
+    _, instruments, config = backtest_inputs
+    minute_bars = tmp_path / "minute.csv"
+    write_minute_csv(minute_bars)
+
+    exit_code = backtest_main(
+        ["run", "--bars", str(minute_bars), "--instruments", str(instruments),
+         "--config", str(config), "--frequency", "minute", "--window", "1"]
+    )
+
+    assert exit_code == 2
