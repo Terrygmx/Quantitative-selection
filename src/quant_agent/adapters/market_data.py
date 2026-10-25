@@ -218,3 +218,52 @@ class ParquetMarketDataPort:
 
     def bars(self, instrument: str, as_of: datetime) -> list[Bar]:
         return self._port.bars(instrument, as_of)
+
+
+class DuckDBMarketDataPort:
+    """MarketDataPort over a DuckDB database file holding a `bars` table
+    (TIMESTAMPTZ columns). duckdb is an optional dependency imported
+    lazily; every read error fails closed."""
+
+    DataUnavailable = DataUnavailable
+
+    _COLUMNS: tuple[str, ...] = (
+        "instrument",
+        "timestamp",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "amount",
+        "available_at",
+    )
+
+    def __init__(self, path: str | Path):
+        try:
+            duckdb = importlib.import_module("duckdb")
+        except ImportError as exc:  # pragma: no cover - environment dependent
+            raise ValueError(
+                "DuckDBMarketDataPort requires the optional duckdb package"
+            ) from exc
+        self.path = Path(path)
+        columns = self._COLUMNS
+        try:
+            connection = duckdb.connect(str(self.path), read_only=True)
+            try:
+                rows = connection.execute(
+                    f"SELECT {', '.join(columns)} FROM bars"
+                ).fetchall()
+            finally:
+                connection.close()
+        except (OSError, duckdb.Error) as exc:
+            raise ValueError(f"cannot read {self.path}: {exc}") from exc
+        bars = [
+            _bar_from_row(dict(zip(columns, row)), "duckdb", index)
+            for index, row in enumerate(rows, start=1)
+        ]
+        self._port = InMemoryMarketDataPort(bars)
+        self.quality_events = self._port.quality_events
+
+    def bars(self, instrument: str, as_of: datetime) -> list[Bar]:
+        return self._port.bars(instrument, as_of)

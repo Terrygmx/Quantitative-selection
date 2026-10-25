@@ -90,14 +90,59 @@ def _parquet_port(bars):
     return ParquetMarketDataPort(path)
 
 
+def _duckdb_port(bars):
+    pytest.importorskip("duckdb")
+    import duckdb
+
+    from quant_agent.adapters.market_data import DuckDBMarketDataPort
+
+    fd, path = tempfile.mkstemp(suffix=".duckdb")
+    os.close(fd)
+    os.unlink(path)
+    connection = duckdb.connect(path)
+    connection.execute(
+        """
+        CREATE TABLE bars (
+            instrument VARCHAR,
+            timestamp TIMESTAMPTZ,
+            open DOUBLE,
+            high DOUBLE,
+            low DOUBLE,
+            close DOUBLE,
+            volume DOUBLE,
+            amount DOUBLE,
+            available_at TIMESTAMPTZ
+        )
+        """
+    )
+    for item in bars:
+        connection.execute(
+            "INSERT INTO bars VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                item.instrument,
+                item.timestamp,
+                item.open,
+                item.high,
+                item.low,
+                item.close,
+                item.volume,
+                item.amount,
+                item.available_at,
+            ],
+        )
+    connection.close()
+    return DuckDBMarketDataPort(path)
+
+
 @pytest.mark.parametrize(
     "make_port",
     [
         lambda bars: InMemoryMarketDataPort(bars),
         _csv_port,
         _parquet_port,
+        _duckdb_port,
     ],
-    ids=["in-memory", "csv", "parquet"],
+    ids=["in-memory", "csv", "parquet", "duckdb"],
 )
 class TestMarketDataPortContract:
     def test_excludes_future_and_unavailable_bars(self, make_port):
