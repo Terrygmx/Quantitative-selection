@@ -1,0 +1,138 @@
+"""FR-6 operator CLIs: `strategy list` and `backtest run`.
+
+Both follow the paper CLI conventions: JSON on stdout, exit 0 on success,
+exit 2 with `error: ...` on stderr for bad configuration."""
+
+import csv
+import json
+from datetime import date, datetime, timezone
+
+import pytest
+
+from quant_agent.cli.backtest import main as backtest_main
+from quant_agent.cli.strategy import main as strategy_main
+
+
+UTC = timezone.utc
+D1 = date(2026, 9, 14)
+D2 = date(2026, 9, 15)
+
+
+def test_strategy_list_prints_registered_plugins(capsys):
+    exit_code = strategy_main(["list"])
+
+    out = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert {
+        "strategy_id": "tail_momentum_overnight",
+        "version": "0.1.0",
+        "frequency": "intraday",
+    } in out
+
+
+def write_bars_csv(path):
+    rows = []
+    for symbol, closes in (("sh600519", (10.0, 10.2)), ("sz000001", (12.0, 12.2))):
+        for day, close in zip((D1, D2), closes):
+            stamp = datetime(day.year, day.month, day.day, 15, 0, tzinfo=UTC)
+            rows.append(
+                {
+                    "instrument": symbol,
+                    "timestamp": stamp.isoformat(),
+                    "open": close,
+                    "high": close,
+                    "low": close,
+                    "close": close,
+                    "volume": 1000.0,
+                    "amount": close * 1000,
+                    "available_at": stamp.isoformat(),
+                }
+            )
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def write_json(path, payload):
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+@pytest.fixture
+def backtest_inputs(tmp_path):
+    bars = tmp_path / "bars.csv"
+    instruments = tmp_path / "instruments.json"
+    config = tmp_path / "backtest.json"
+    write_bars_csv(bars)
+    write_json(
+        instruments,
+        [
+            {
+                "symbol": "sh600519",
+                "exchange": "SSE",
+                "board": "MainBoard",
+                "status": "Active",
+                "listing_date": "2010-01-01",
+                "tick": "0.01",
+                "lot_size": 100,
+            },
+            {
+                "symbol": "sz000001",
+                "exchange": "SZSE",
+                "board": "MainBoard",
+                "status": "Active",
+                "listing_date": "1991-04-03",
+                "tick": "0.01",
+                "lot_size": 100,
+            },
+        ],
+    )
+    write_json(
+        config,
+        {
+            "initial_cash": "100000.00",
+            "buy_quantity": 100,
+            "commission_rate": "0.0003",
+            "stamp_tax_rate": "0.0005",
+            "slippage_rate": "0.001",
+        },
+    )
+    return bars, instruments, config
+
+
+def test_backtest_run_reports_orders_fills_and_summary(backtest_inputs, capsys):
+    bars, instruments, config = backtest_inputs
+
+    exit_code = backtest_main(
+        [
+            "run",
+            "--bars", str(bars),
+            "--instruments", str(instruments),
+            "--config", str(config),
+        ]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert len(report["orders"]) == 4  # two symbols x two days
+    assert {order["symbol"] for order in report["orders"]} == {
+        "sh600519",
+        "sz000001",
+    }
+    assert report["summary"]["fill_count"] == 4
+    assert report["summary"]["total_return"] > 0
+
+
+def test_backtest_run_fails_closed_on_missing_inputs(tmp_path, capsys):
+    exit_code = backtest_main(
+        [
+            "run",
+            "--bars", str(tmp_path / "missing.csv"),
+            "--instruments", str(tmp_path / "missing.json"),
+            "--config", str(tmp_path / "missing.json"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert captured.err.startswith("error:")
