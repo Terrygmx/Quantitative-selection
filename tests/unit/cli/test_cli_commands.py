@@ -136,3 +136,60 @@ def test_backtest_run_fails_closed_on_missing_inputs(tmp_path, capsys):
     captured = capsys.readouterr()
     assert exit_code == 2
     assert captured.err.startswith("error:")
+
+
+def test_backtest_run_honors_the_end_date(backtest_inputs, capsys):
+    bars, instruments, config = backtest_inputs
+
+    exit_code = backtest_main(
+        [
+            "run",
+            "--bars", str(bars),
+            "--instruments", str(instruments),
+            "--config", str(config),
+            "--end", "2026-09-14",
+        ]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert len(report["orders"]) == 2  # first day only
+    assert report["summary"]["fill_count"] == 2
+
+
+def test_backtest_run_splits_in_and_out_of_sample(backtest_inputs, capsys):
+    bars, instruments, config = backtest_inputs
+
+    exit_code = backtest_main(
+        [
+            "run",
+            "--bars", str(bars),
+            "--instruments", str(instruments),
+            "--config", str(config),
+            "--split", "2026-09-15",
+        ]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert set(report) == {"in_sample", "out_of_sample"}
+    assert report["in_sample"]["summary"]["fill_count"] == 2
+    assert report["out_of_sample"]["summary"]["fill_count"] == 2
+
+
+def test_backtest_run_rejects_a_split_before_the_start(backtest_inputs, capsys):
+    bars, instruments, config = backtest_inputs
+
+    exit_code = backtest_main(
+        [
+            "run",
+            "--bars", str(bars),
+            "--instruments", str(instruments),
+            "--config", str(config),
+            "--start", "2026-09-14",
+            "--split", "2026-09-01",
+        ]
+    )
+
+    assert exit_code == 2
+    assert capsys.readouterr().err.startswith("error:")

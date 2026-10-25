@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -37,7 +37,10 @@ def _decimal(value: object, field: str) -> Decimal:
 
 
 def _bars_for_engine(
-    port: CsvMarketDataPort, symbols: Sequence[str]
+    port: CsvMarketDataPort,
+    symbols: Sequence[str],
+    start: date | None = None,
+    end: date | None = None,
 ) -> dict[str, list[Mapping[str, object]]]:
     as_of = datetime.now(timezone.utc)
     bars: dict[str, list[Mapping[str, object]]] = {}
@@ -46,10 +49,15 @@ def _bars_for_engine(
         previous_close: float | None = None
         entries: list[Mapping[str, object]] = []
         for row in rows:
+            day = row.timestamp.date()
+            if start is not None and day < start:
+                continue
+            if end is not None and day > end:
+                continue
             close = row.close
             entries.append(
                 {
-                    "date": row.timestamp.date(),
+                    "date": day,
                     "open": str(row.open),
                     "close": str(close),
                     "previous_close": str(
@@ -63,7 +71,38 @@ def _bars_for_engine(
     return bars
 
 
+def _iso_date(value: str, field: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be an ISO date") from exc
+
+
 def _run(args: argparse.Namespace) -> dict[str, object]:
+    start = _iso_date(args.start, "--start") if args.start else None
+    end = _iso_date(args.end, "--end") if args.end else None
+    split = _iso_date(args.split, "--split") if args.split else None
+    if split is not None:
+        if start is not None and split <= start:
+            raise ValueError("--split must fall after --start")
+        if end is not None and split > end:
+            raise ValueError("--split must fall before or on --end")
+        return {
+            "in_sample": _run_once(args, start=start, end=_day_before(split)),
+            "out_of_sample": _run_once(args, start=split, end=end),
+        }
+    return _run_once(args, start=start, end=end)
+
+
+def _day_before(day: date) -> date:
+    from datetime import timedelta
+
+    return day - timedelta(days=1)
+
+
+def _run_once(
+    args: argparse.Namespace, start: date | None, end: date | None
+) -> dict[str, object]:
     config_data = _load_json(args.config)
     if not isinstance(config_data, Mapping):
         raise ValueError("backtest config must be a JSON object")
@@ -82,7 +121,9 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
         instruments[instrument.symbol] = instrument
 
     engine = MultiInstrumentBacktestEngine(
-        bars=_bars_for_engine(CsvMarketDataPort(args.bars), sorted(instruments)),
+        bars=_bars_for_engine(
+            CsvMarketDataPort(args.bars), sorted(instruments), start, end
+        ),
         instruments=instruments,
         config=BacktestConfig(
             initial_cash=_decimal(config_data.get("initial_cash"), "initial_cash"),
@@ -166,6 +207,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--config", type=Path, required=True, help="JSON cost config")
     run.add_argument(
         "--exchange", default="SSE", help="calendar exchange (SSE or SZSE)"
+    )
+    run.add_argument("--start", default="", help="ISO date bound (inclusive)")
+    run.add_argument("--end", default="", help="ISO date bound (inclusive)")
+    run.add_argument(
+        "--split",
+        default="",
+        help="ISO date splitting in-sample (< split) from out-of-sample (>= split)",
     )
     return parser
 

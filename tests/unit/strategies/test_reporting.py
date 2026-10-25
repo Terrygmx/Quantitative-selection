@@ -25,3 +25,21 @@ def test_signal_report_contains_symbol_and_weights():
     report = render_signal_report([signal])
 
     assert "sh600519 long weight=0.20 confidence=0.80" in report
+
+
+def test_render_supports_a_custom_title():
+    from quant_agent.strategies.reporting import render_signal_report
+
+    assert render_signal_report([], title="Strategy signals") == "No signals."
+    text = render_signal_report(
+        [Signal(
+            strategy_id="s", version="1", symbol="sh600519", side="long",
+            target_weight=0.5, confidence=0.9,
+            valid_from=datetime(2026, 9, 15, tzinfo=timezone.utc),
+            valid_to=datetime(2026, 9, 16, tzinfo=timezone.utc),
+            evidence={},
+        )],
+        title="Daily report",
+    )
+    assert text.splitlines()[0] == "Daily report"
+    assert "sh600519" in text
