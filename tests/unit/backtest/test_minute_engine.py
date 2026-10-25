@@ -168,3 +168,74 @@ def test_future_revisions_are_invisible_at_the_decision_moment():
 
     fills = [event.fill for event in events if event.fill is not None]
     assert fills[0].price == Decimal("10.41")
+
+
+def test_prefetch_engine_produces_identical_results(tmp_path):
+    """The per-day-cursor engine must match the query-per-day engine
+    exactly on the same data (fills, cash, positions)."""
+    from quant_agent.adapters.market_data import InMemoryMarketDataPort
+    from quant_agent.application.intraday import MinuteBacktestEngine
+
+    bars = []
+    for day in (D1, D2):
+        for hhmm, price in (("0931", 10.0), ("1200", 10.3), ("1431", 10.5), ("1500", 10.6)):
+            bars.append(minute_bar(day, hhmm, price))
+    bars = [
+        Bar(
+            instrument=bar.instrument,
+            timestamp=bar.timestamp,
+            open=bar.open,
+            high=bar.high,
+            low=bar.low,
+            close=bar.close,
+            volume=bar.volume,
+            available_at=bar.available_at,
+        )
+        for bar in bars
+    ]
+    bars += [
+        Bar(
+            instrument="sz000001",
+            timestamp=bar.timestamp,
+            open=bar.open,
+            high=bar.high,
+            low=bar.low,
+            close=bar.close,
+            volume=bar.volume,
+            available_at=bar.available_at,
+        )
+        for bar in bars
+    ]
+    port = InMemoryMarketDataPort(bars)
+    instruments = {"sh600519": instrument(), "sz000001": instrument("sz000001", )}
+    instruments["sz000001"] = Instrument(
+        symbol="sz000001",
+        exchange="SZSE",
+        board="MainBoard",
+        status="Active",
+        listing_date=date(2010, 1, 1),
+        tick=Decimal("0.01"),
+        lot_size=100,
+    )
+    rules = TradingRulesPlugin(StaticTradingCalendar.for_exchange("SSE"))
+
+    baseline = MinuteBacktestEngine(
+        port=port, instruments=instruments, config=config(), rules=rules
+    )
+    baseline_events = baseline.run()
+
+    cursor = MinuteBacktestEngine.prefetched(
+        port=port, instruments=instruments, config=config(), rules=rules
+    )
+    cursor_events = cursor.run()
+
+    assert [e.fill.price for e in baseline_events if e.fill] == [
+        e.fill.price for e in cursor_events if e.fill
+    ]
+    assert baseline.cash == cursor.cash
+    assert baseline.position("sh600519").settled_qty == cursor.position(
+        "sh600519"
+    ).settled_qty
+    assert baseline.position("sz000001").settled_qty == cursor.position(
+        "sz000001"
+    ).settled_qty

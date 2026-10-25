@@ -23,6 +23,26 @@ CN_MARKET_TZ = ZoneInfo("Asia/Shanghai")
 _END_OF_DAY = time(23, 59)
 
 
+class _SymbolCursor:
+    """Per-symbol daily buckets advanced by a day cursor: replaces the
+    O(days x symbols x history) repeated port queries with one pass."""
+
+    __slots__ = ("buckets", "_index")
+
+    def __init__(self, bars_by_day: dict[date, list]):
+        self.buckets = bars_by_day
+        self._index = 0
+
+    def advance_to(self, day: date) -> list:
+        """Advance the cursor and return the bars for `day` (empty if none)."""
+        days = list(self.buckets)
+        while self._index < len(days) and days[self._index] < day:
+            self._index += 1
+        if self._index < len(days) and days[self._index] == day:
+            return self.buckets[days[self._index]]
+        return []
+
+
 class MinuteBacktestEngine:
     def __init__(
         self,
@@ -44,6 +64,27 @@ class MinuteBacktestEngine:
         self._fills: list[FillRecord] = []
         self._session_closes: dict[tuple[str, date], Decimal] = {}
         self._order_seq = 0
+        self._cursors: dict[str, _SymbolCursor] | None = None
+
+    @classmethod
+    def prefetched(cls, port, instruments, config, rules, decision_time: str = "1431"):
+        """Build an engine whose per-day decisions come from one prefetch
+        pass over each symbol's visible history instead of per-day port
+        queries; results are identical to the query-per-day engine."""
+        engine = cls(port, instruments, config, rules, decision_time)
+        horizon = datetime(2999, 1, 1, tzinfo=CN_MARKET_TZ)
+        cursors: dict[str, _SymbolCursor] = {}
+        for symbol in instruments:
+            try:
+                bars = port.bars(symbol, horizon)
+            except DataUnavailable:
+                bars = []
+            buckets: dict[date, list] = {}
+            for bar in bars:
+                buckets.setdefault(bar.timestamp.astimezone(CN_MARKET_TZ).date(), []).append(bar)
+            cursors[symbol] = _SymbolCursor(buckets)
+        engine._cursors = cursors
+        return engine
 
     @property
     def cash(self) -> Decimal:
@@ -114,6 +155,15 @@ class MinuteBacktestEngine:
     def _decision_bar(self, symbol: str, decision_at: datetime):
         """Latest bar at or before the decision moment on the same CN
         trading day; later bars never leak in (PIT by construction)."""
+        cursor = self._cursors.get(symbol) if self._cursors else None
+        if cursor is not None:
+            day_bars = cursor.advance_to(decision_at.date())
+            eligible = [
+                bar
+                for bar in day_bars
+                if bar.timestamp.astimezone(CN_MARKET_TZ) <= decision_at
+            ]
+            return eligible[-1] if eligible else None
         try:
             bars = self.port.bars(symbol, decision_at)
         except DataUnavailable:
