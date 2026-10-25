@@ -8,7 +8,13 @@ from datetime import datetime
 from decimal import Decimal
 import json
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Protocol
+
+
+class MarketDataPortLike(Protocol):
+    """Structural PIT port surface used by agent role tools."""
+
+    def bars(self, instrument: str, as_of: datetime) -> list[Bar]: ...
 
 
 @dataclass(frozen=True, slots=True)
