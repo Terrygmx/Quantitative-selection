@@ -2,16 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation
 from typing import Mapping, Protocol
 
-from quant_agent.application.orders import OrderStateMachine, PendingOrder
+from quant_agent.application.execution import (
+    ExecutionCore,
+    ExecutionCosts,
+    ExecutionOutcome,
+    ExecutionPosition,
+)
 from quant_agent.domain.clock import Clock, SystemClock
 from quant_agent.domain.models import Instrument, Order
 from quant_agent.rules.trading import (
     MarketSnapshot,
-    Portfolio,
-    Position,
     TradingRulesPlugin,
 )
 
@@ -117,15 +120,20 @@ class PaperExecutionConfig:
     slippage_rate: Decimal = Decimal("0.001")
     buy_quantity: int = 100
 
+    @property
+    def costs(self) -> ExecutionCosts:
+        return ExecutionCosts(
+            commission_rate=self.commission_rate,
+            stamp_tax_rate=self.stamp_tax_rate,
+            slippage_rate=self.slippage_rate,
+        )
 
-@dataclass
-class PaperPosition:
-    settled_qty: int = 0
-    unsettled_buy_qty: int = 0
+
+PaperPosition = ExecutionPosition
 
 
 class SimulatedPaperExecution:
-    """Deterministic paper fills that reuse the A-share rules and order ledger."""
+    """Deterministic paper fills routed through the shared execution core."""
 
     def __init__(
         self,
@@ -136,13 +144,25 @@ class SimulatedPaperExecution:
         self.config = config
         self.instruments = dict(instruments)
         self.rules = rules
-        self.cash = config.initial_cash
-        self.positions: dict[str, PaperPosition] = {}
-        self.order_states = OrderStateMachine()
+        self.core = ExecutionCore(config.initial_cash, config.costs, rules)
         self._order_id = 0
         self._last_prices: dict[str, Decimal] = {}
         self._previous_closes: dict[str, Decimal] = {}
         self._tradable: dict[str, bool] = {}
+
+    @property
+    def cash(self) -> Decimal:
+        return self.core.cash
+
+    @property
+    def order_states(self):
+        return self.core.order_states
+
+    def position(self, symbol: str) -> PaperPosition:
+        return self.core.position(symbol)
+
+    def settle(self) -> None:
+        self.core.settle()
 
     def execute(
         self,
@@ -197,18 +217,10 @@ class SimulatedPaperExecution:
             raise ValueError("strategy config requires a non-empty universe")
         return [str(symbol) for symbol in raw]
 
-    def position(self, symbol: str) -> PaperPosition:
-        return self.positions.setdefault(symbol, PaperPosition())
-
-    def settle(self) -> None:
-        for position in self.positions.values():
-            position.settled_qty += position.unsettled_buy_qty
-            position.unsettled_buy_qty = 0
-
     def sell_all(self, timestamp: datetime) -> list[Mapping[str, object]]:
         orders: list[Mapping[str, object]] = []
-        for symbol in sorted(self.positions):
-            position = self.positions[symbol]
+        for symbol in sorted(self.core.positions):
+            position = self.core.positions[symbol]
             if position.settled_qty <= 0:
                 continue
             orders.append(
@@ -231,15 +243,11 @@ class SimulatedPaperExecution:
             return self._reject_intent(
                 instrument.symbol, "buy", size, "INVALID_PRICE", timestamp
             )
-        fill_price = self._tick_price(
-            instrument, market.last * (1 + self.config.slippage_rate)
-        )
+        fill_price = self.config.costs.fill_price(instrument, market.last, "buy")
         order = self._create_order(
             instrument.symbol, "buy", size, fill_price, timestamp
         )
-        return self._settle_order(
-            order, market, timestamp, buy=True, price=fill_price
-        )
+        return self._execute(order, instrument, market)
 
     def _sell_symbol(
         self, instrument: Instrument, quantity: int, timestamp: datetime
@@ -257,76 +265,36 @@ class SimulatedPaperExecution:
             "tradable": self._tradable.get(instrument.symbol, True),
         }
         market = self._market_snapshot(instrument, snapshot)
-        fill_price = self._tick_price(
-            instrument, market.last * (1 - self.config.slippage_rate)
-        )
+        fill_price = self.config.costs.fill_price(instrument, market.last, "sell")
         order = self._create_order(
             instrument.symbol, "sell", quantity, fill_price, timestamp
         )
-        return self._settle_order(
-            order, market, timestamp, buy=False, price=fill_price
-        )
+        return self._execute(order, instrument, market)
 
-    def _settle_order(
+    def _execute(
         self,
         order: Order,
+        instrument: Instrument,
         market: MarketSnapshot,
-        timestamp: datetime,
-        *,
-        buy: bool,
-        price: Decimal,
     ) -> dict[str, object]:
-        self.order_states.submit(PendingOrder(order.id, order.created_at))
-        position = self.position(order.symbol)
-        portfolio = Portfolio(
-            {
-                order.symbol: Position(
-                    settled_qty=position.settled_qty,
-                    unsettled_buy_qty=position.unsettled_buy_qty,
-                )
-            }
-        )
-        rejections = self.rules.validate_order(order, portfolio, market)
-        if rejections:
-            return self._reject(order, rejections[0].code, timestamp)
-        gross = price * order.quantity
-        fee = gross * self.config.commission_rate
-        tax = gross * self.config.stamp_tax_rate if not buy else Decimal("0")
-        if buy:
-            if gross + fee > self.cash:
-                return self._reject(order, "INSUFFICIENT_CASH", timestamp)
-            self.cash -= gross + fee
-            position.unsettled_buy_qty += order.quantity
-        else:
-            self.cash += gross - fee - tax
-            position.settled_qty -= order.quantity
-        self.order_states.fill(order.id, timestamp)
-        return {
-            "order_id": order.id,
-            "symbol": order.symbol,
-            "side": order.side,
-            "quantity": order.quantity,
-            "price": str(price),
-            "fee": str(fee + tax),
-            "status": "FILLED",
-            "timestamp": timestamp.isoformat(),
-        }
+        outcome = self.core.execute_order(order, instrument, market)
+        return self._as_result(outcome)
 
-    def _reject(
-        self, order: Order, reason_code: str, timestamp: datetime
-    ) -> dict[str, object]:
-        self.order_states.reject(order.id, reason_code, timestamp)
-        return {
-            "order_id": order.id,
-            "symbol": order.symbol,
-            "side": order.side,
-            "quantity": order.quantity,
-            "price": str(order.limit_price),
-            "fee": "0",
-            "status": "REJECTED",
-            "reason_code": reason_code,
-            "timestamp": timestamp.isoformat(),
+    @staticmethod
+    def _as_result(outcome: ExecutionOutcome) -> dict[str, object]:
+        result: dict[str, object] = {
+            "order_id": outcome.order_id,
+            "symbol": outcome.symbol,
+            "side": outcome.side,
+            "quantity": outcome.quantity,
+            "price": str(outcome.price),
+            "fee": str(outcome.fee),
+            "status": outcome.status,
+            "timestamp": outcome.timestamp.isoformat(),
         }
+        if outcome.reason_code is not None:
+            result["reason_code"] = outcome.reason_code
+        return result
 
     def _reject_intent(
         self,
@@ -340,8 +308,7 @@ class SimulatedPaperExecution:
         non-positive snapshot price), while keeping the audit ledger complete."""
         self._order_id += 1
         order_id = f"paper-{self._order_id}"
-        self.order_states.submit(PendingOrder(order_id, timestamp))
-        self.order_states.reject(order_id, reason_code, timestamp)
+        self.core.reject_intent(order_id, reason_code, timestamp)
         return {
             "order_id": order_id,
             "symbol": symbol,
@@ -380,8 +347,3 @@ class SimulatedPaperExecution:
             previous_close=previous_close if previous_close > 0 else last,
             tradable=tradable,
         )
-
-    @staticmethod
-    def _tick_price(instrument: Instrument, price: Decimal) -> Decimal:
-        # Order prices must respect the instrument tick, or rules reject them.
-        return price.quantize(instrument.tick, rounding=ROUND_HALF_UP)
