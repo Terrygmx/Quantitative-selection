@@ -136,6 +136,12 @@ PYTHONPATH=src python3 -m quant_agent.cli.paper \
 - 15:05–15:30 内再次运行时按当时快照的 `last`（即收盘价）无滑点撮合，撮合结果带 `submitted_at` 与原意图 id；
 - 意图按日有效：次日运行时报 `EXPIRED`；盘中运行不会触发撮合，队列意图绝不会以连续竞价价格成交。
 
+## 环境与部署
+
+四套环境配置在 `configs/environments/{dev,research,paper,prod}.json`：dev/research 免审批且恒 dry-run；paper 为唯一非 dry-run 环境且强制审批（`state/paper-approvals.json`）；**prod 即使启用也默认 dry-run**（§9），强制审批。配置文件不含密钥（有测试锁定）。
+
+单机部署：`docker build -t quant-selection:paper . && docker compose up paper`（compose 默认执行 dry-run 命令；审批账本挂载于 `paper-state` 卷）。镜像内入口 fail closed：无审批账本则退出码 2。
+
 ## 性能基准
 
 基准用合成数据验证 3000 只股票 × 5 年（1260 个样本日）的多标的回测事件时钟：

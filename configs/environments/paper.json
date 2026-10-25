@@ -1,0 +1,11 @@
+{
+  "environment": "paper",
+  "defaults": {
+    "dry_run": false,
+    "require_approval": true,
+    "approvals_path": "state/paper-approvals.json",
+    "log_level": "INFO",
+    "audit_sink": "jsonl",
+    "audit_path": "state/audit-paper.jsonl"
+  }
+}

@@ -50,6 +50,17 @@
 - [x] `StaticTradingCalendar` 的 2027+ 与勘误已可通过 `FileCalendarSource` 外部供给（见 M2 与 RUNBOOK）。
 - [x] 模拟执行器支持盘后定价会话：配置 `session: after_hours_fixed` 时盘中申报进延迟撮合队列（`QUEUED_AFTER_HOURS`），15:05–15:30 按收盘价无滑点撮合，跨日意图 `EXPIRED`；连续竞价会话行为不变。
 
+## M9 运维与第二阶段（原 HANDOVER 剩余项）
+
+- [x] 数据分层：`RawStore`（内容寻址、追加-only、自愈恢复）+ `CuratedStore`（Parquet 按日分区 + DuckDB 元数据血缘）。
+- [x] Agent 角色工具执行体：`RoleToolbox`（读 PIT 数据、写草稿、追加质量事件、解释信号/拒绝，全部注入式只读边界 + 免责声明）。
+- [x] §6 策略序列全部五个插件：tail_momentum_overnight、trend_breakout、mean_reversion_liquid、low_vol_quality、industry_rotation。
+- [x] 四环境配置（prod 恒 dry-run，无密钥有测试锁定）+ Dockerfile + docker-compose（paper 服务，dry-run 命令，审批卷）。
+- [ ] 网关→工具箱集成层（网关审计与工具执行体的直接串联）。
+- [ ] Curated/Feature Store 持久化对接（写入路径接 CuratedStore）。
+- [ ] 深交所 docx 逐行解析（对齐已由证监会发布确认）。
+- [ ] 实盘接口：PRD 非目标，另立评审。
+
 ## M8 质量闸门
 
 - [x] 覆盖率阈值不低于 90% 已接入 CI，当前总覆盖率 96%。

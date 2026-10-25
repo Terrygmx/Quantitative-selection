@@ -1,0 +1,9 @@
+{
+  "environment": "dev",
+  "defaults": {
+    "dry_run": true,
+    "require_approval": false,
+    "log_level": "DEBUG",
+    "audit_sink": "memory"
+  }
+}

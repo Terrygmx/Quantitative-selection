@@ -1,0 +1,12 @@
+{
+  "environment": "prod",
+  "defaults": {
+    "dry_run": true,
+    "require_approval": true,
+    "approvals_path": "state/paper-approvals.json",
+    "log_level": "WARNING",
+    "audit_sink": "jsonl",
+    "audit_path": "state/audit-prod.jsonl",
+    "note": "prod defaults to dry-run even when enabled (DETAILED_DESIGN section 9)"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "environment": "research",
+  "defaults": {
+    "dry_run": true,
+    "require_approval": false,
+    "log_level": "INFO",
+    "audit_sink": "jsonl",
+    "audit_path": "state/audit-research.jsonl"
+  }
+}
