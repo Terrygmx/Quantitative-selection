@@ -182,3 +182,61 @@ def test_correlation_budget_accepts_uncorrelated_strategies():
     )
 
     assert all(target.status == "accepted" for target in result.targets)
+
+
+def test_blocked_strategies_are_excluded_with_an_audit_record():
+    """FR-3 data-quality gate: a block-level quality event must stop the
+    affected strategy's signals from reaching the portfolio layer."""
+    signals = [
+        signal(strategy_id="healthy", symbol="sh600519", weight=0.5, industry="白酒"),
+        signal(strategy_id="dirty", symbol="sz000001", weight=0.5, industry="银行"),
+    ]
+
+    result = composer().compose(signals, blocked_strategies={"dirty"})
+
+    # Healthy signal survives; contributions carry the surviving strategy.
+    assert [target.symbol for target in result.targets] == ["sh600519"]
+    assert "healthy" in result.targets[0].contributions
+    assert all("dirty" not in target.contributions for target in result.targets)
+    blocked = [
+        decision
+        for decision in result.decisions
+        if decision.reason_code == "STRATEGY_BLOCKED"
+    ]
+    assert [decision.symbol for decision in blocked] == ["sz000001"]
+    assert all(decision.status == "rejected" for decision in blocked)
+    assert all(decision.net_weight == 0.0 for decision in blocked)
+
+
+def test_quality_block_events_derive_blocked_strategies():
+    """The collector exposes the blocked strategy ids for the composer."""
+    from datetime import datetime, timezone
+
+    from quant_agent.adapters.market_data import (
+        QualityEvent,
+        QualityEventCollector,
+    )
+
+    collector = QualityEventCollector()
+    collector.record(
+        QualityEvent(
+            level="block",
+            reason_code="MISSING_REQUIRED_BAR",
+            symbol="sh600519",
+            as_of=datetime(2026, 9, 15, 14, 30, tzinfo=timezone.utc),
+            message="no bar",
+        ),
+        strategy_id="dirty",
+    )
+    collector.record(
+        QualityEvent(
+            level="warn",
+            reason_code="STALE",
+            symbol="sh600519",
+            as_of=datetime(2026, 9, 15, 14, 30, tzinfo=timezone.utc),
+            message="stale",
+        ),
+        strategy_id="warned",
+    )
+
+    assert collector.blocked_strategy_ids() == {"dirty"}

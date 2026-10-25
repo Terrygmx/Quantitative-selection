@@ -88,7 +88,27 @@ class SignalComposer:
     def __init__(self, config: PortfolioRiskConfig):
         self.config = config
 
-    def compose(self, signals: list[Mapping[str, object]]) -> CompositionResult:
+    def compose(
+        self,
+        signals: list[Mapping[str, object]],
+        blocked_strategies: set[str] | None = None,
+    ) -> CompositionResult:
+        blocked = blocked_strategies or set()
+        passed: list[Mapping[str, object]] = []
+        blocked_decisions: list[RiskDecision] = []
+        for signal in signals:
+            if str(signal["strategy_id"]) in blocked:
+                blocked_decisions.append(
+                    RiskDecision(
+                        symbol=str(signal["symbol"]),
+                        status="rejected",
+                        net_weight=0.0,
+                        reason_code="STRATEGY_BLOCKED",
+                    )
+                )
+                continue
+            passed.append(signal)
+        signals = passed
         as_of = max(
             (datetime.fromisoformat(str(signal["valid_from"])) for signal in signals),
             default=None,
@@ -190,7 +210,10 @@ class SignalComposer:
             )
             for target in processed
         )
-        return CompositionResult(targets=tuple(processed), decisions=decisions)
+        return CompositionResult(
+            targets=tuple(processed),
+            decisions=tuple(decisions) + tuple(blocked_decisions),
+        )
 
     def _correlation_rejections(
         self, by_symbol: Mapping[str, Mapping[str, float]]

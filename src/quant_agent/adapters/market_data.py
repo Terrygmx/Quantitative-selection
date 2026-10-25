@@ -85,6 +85,15 @@ class QualityEventCollector:
     def for_strategy(self, strategy_id: str) -> list[QualityEvent]:
         return list(self._events_by_strategy.get(strategy_id, ()))
 
+    def blocked_strategy_ids(self) -> set[str]:
+        """Strategy ids with at least one block-level event: the set the
+        portfolio layer must exclude (FR-2.3/FR-3 data-quality gate)."""
+        return {
+            strategy_id
+            for strategy_id, events in self._events_by_strategy.items()
+            if any(event.level == "block" for event in events)
+        }
+
 
 class InMemoryMarketDataPort:
     DataUnavailable = DataUnavailable
