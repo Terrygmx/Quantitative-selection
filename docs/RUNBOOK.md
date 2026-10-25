@@ -62,6 +62,8 @@ PYTHONPATH=src python3 -m quant_agent.cli.agent review --audit audit.jsonl
 
 `--start/--end` 为闭区间日期过滤；`--split` 输出 `in_sample`（< split）/`out_of_sample`（≥ split）两段独立回测；`--window N` 输出连续滚动窗口逐段回测；`--benchmark SYMBOL` 用同一份 bars 计算该标的买入持有收益并给出 `excess_return`（FR-3.1）。
 
+**网格模式**（`--frequency minute --grid-low 9.00 --grid-high 12.00 --grid-steps 6`）：在低价与高价间布 `steps` 个内部格位，驻留限价单——价格下穿格位按格价买入、上穿按格价卖出（无滑点，`next_open` 模型以格价为参考），跨多格的快跌逐格成交（最近格优先）；卖出按整手提交、由规则层裁决 T+1（同日卖出拒 `T1_UNSETTLED`）；格位超出当日价格带（前收±涨跌幅）被规则层拒绝。全部成交走共享成交内核。测试数据的时间戳必须带正确时区（CN 交易时段）。
+
 **分钟频模式**（FR-3.1）：`--frequency minute --decision HHMM`（默认 1431，尾盘动量快照语义）。每个交易日按决策时刻取**不晚于该时刻的最后一根分钟 bar** 定价（晚于决策时刻的 bar 由 PIT 构造保证不可见），经共享成交内核与规则校验（分钟级时间戳会真实命中午休/时段/盘后定价窗口）；当日决策前无 bar 的标的跳过。CSV 的 `available_at` 必须等于 bar 时间戳（事件时间可见性）方可重放；`--start/--end/--split/--window` 为日频专用，与分钟模式互斥。
 
 `--bars` 使用数据适配器的 CSV 列契约（见「数据适配器」）；`--instruments` 为 `Instrument` 字段的 JSON 数组；`--config` 提供 `initial_cash/buy_quantity/commission_rate/stamp_tax_rate/slippage_rate`，可选 `fill_model`（`slippage` 默认／`next_open` 按参考开盘价无滑点／`vwap` 按成交额÷成交量、bar 缺 `amount`/`volume` 时 fail closed；模拟盘配置 `PaperExecutionConfig` 同名字段同语义，`vwap` 在仅有点位快照的模拟盘不可用）。输出 orders/fills/summary JSON；配置错误退出码 2。

@@ -79,6 +79,18 @@ class GridBacktestEngine:
     def position(self, symbol: str):
         return self.core.position(symbol)
 
+    def equity(self) -> Decimal:
+        """Cash plus holdings marked at each symbol's last seen price."""
+        total = self.cash
+        for symbol, position in self.core.positions.items():
+            quantity = position.settled_qty + position.unsettled_buy_qty
+            if quantity <= 0:
+                continue
+            last_price = self._last_price.get(symbol)
+            if last_price is not None:
+                total += last_price * quantity
+        return total
+
     def grid_levels(self) -> list[Decimal]:
         step = (self.grid_high - self.grid_low) / self.grid_steps
         return [

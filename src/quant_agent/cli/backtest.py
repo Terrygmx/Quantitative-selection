@@ -16,6 +16,7 @@ from quant_agent.application.backtest import (
     BacktestConfig,
     MultiInstrumentBacktestEngine,
 )
+from quant_agent.application.grid import GridBacktestEngine, GridConfig
 from quant_agent.application.intraday import MinuteBacktestEngine
 from quant_agent.application.metrics import BacktestMetrics
 from quant_agent.domain.models import Instrument
@@ -90,6 +91,8 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
                 "--frequency minute runs the full minute history; "
                 "--start/--end/--split/--window are daily-frequency only"
             )
+        if args.grid_steps:
+            return _run_grid(args)
         return _run_minute(args)
     if split is not None and window:
         raise ValueError("--split and --window are mutually exclusive")
@@ -201,6 +204,38 @@ def _fill_rows(events) -> list[Mapping[str, object]]:
                 }
             )
     return fills
+
+
+def _run_grid(args: argparse.Namespace) -> dict[str, object]:
+    config_data = _load_json(args.config)
+    if not isinstance(config_data, Mapping):
+        raise ValueError("backtest config must be a JSON object")
+    engine = GridBacktestEngine(
+        port=CsvMarketDataPort(args.bars),
+        instruments=_load_instruments(args),
+        config=GridConfig(
+            initial_cash=_decimal(config_data.get("initial_cash"), "initial_cash"),
+            buy_quantity=_backtest_config(config_data).buy_quantity,
+            commission_rate=_decimal(
+                config_data.get("commission_rate", "0.0003"), "commission_rate"
+            ),
+            stamp_tax_rate=_decimal(
+                config_data.get("stamp_tax_rate", "0.0005"), "stamp_tax_rate"
+            ),
+        ),
+        rules=TradingRulesPlugin(
+            StaticTradingCalendar.for_exchange(str(args.exchange))
+        ),
+        grid_low=_decimal(args.grid_low, "--grid-low"),
+        grid_high=_decimal(args.grid_high, "--grid-high"),
+        grid_steps=int(args.grid_steps),
+    )
+    events = engine.run()
+    return {
+        "orders": _order_rows(events, engine),
+        "fills": _fill_rows(events),
+        "summary": _final_metrics(engine, events),
+    }
 
 
 def _run_minute(args: argparse.Namespace) -> dict[str, object]:
@@ -332,6 +367,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--decision",
         default="1431",
         help="minute-frequency decision time HHMM (default 1431)",
+    )
+    run.add_argument("--grid-low", default="", help="grid strategy: lowest grid level")
+    run.add_argument("--grid-high", default="", help="grid strategy: highest grid level")
+    run.add_argument(
+        "--grid-steps",
+        type=int,
+        default=0,
+        help="grid strategy: number of price bands between low and high",
     )
     run.add_argument(
         "--instruments", type=Path, required=True, help="JSON array of instruments"

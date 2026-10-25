@@ -305,3 +305,42 @@ def test_backtest_run_minute_rejects_daily_only_options(backtest_inputs, tmp_pat
     )
 
     assert exit_code == 2
+
+
+def test_backtest_run_grid_strategy(backtest_inputs, tmp_path, capsys):
+    _, instruments, config = backtest_inputs
+    minute_bars = tmp_path / "grid.csv"
+    from zoneinfo import ZoneInfo
+
+    cn = ZoneInfo("Asia/Shanghai")
+    rows = []
+    for hhmm, close in (("0931", "10.4"), ("1400", "9.85")):
+        stamp = datetime(2026, 9, 14, int(hhmm[:2]), int(hhmm[2:]), tzinfo=cn)
+        rows.append(
+            {
+                "instrument": "sh600519",
+                "timestamp": stamp.isoformat(),
+                "open": close,
+                "high": close,
+                "low": close,
+                "close": close,
+                "volume": 1000.0,
+                "amount": 0.0,
+                "available_at": stamp.isoformat(),
+            }
+        )
+    with open(minute_bars, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    exit_code = backtest_main(
+        ["run", "--bars", str(minute_bars), "--instruments", str(instruments),
+         "--config", str(config), "--frequency", "minute",
+         "--grid-low", "9.00", "--grid-high", "12.00", "--grid-steps", "6"]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert report["summary"]["fill_count"] == 1
+    assert report["fills"][0]["price"] == "10.00"
