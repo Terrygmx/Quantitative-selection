@@ -109,7 +109,13 @@ class RoleToolbox:
     ) -> Mapping[str, object]:
         dataset = self.read_approved_dataset(symbol, as_of)
         bars = dataset.get("bars", [])
-        last_close = bars[-1]["close"] if bars else None
+        last_close: float | None = None
+        if isinstance(bars, list) and bars:
+            last_row = bars[-1]
+            if isinstance(last_row, dict):
+                close = last_row.get("close")
+                if isinstance(close, (int, float)):
+                    last_close = float(close)
         return {
             "symbol": symbol,
             "as_of": as_of.isoformat(),
