@@ -27,7 +27,7 @@
 
 ## M5 插件与策略
 
-- [x] `trend_breakout` 日频策略插件已接入（§6 序列第 2 个）：收盘突破 `breakout_window` 前高 + 突破前 `trend_window` 均线已上行的双重过滤（突破前判定避免同窗 MA 数学上必然上行的空转过滤），`valid_to = as_of + breakout_window` 天持有，config schema/README/注册表齐备。剩余策略（`mean_reversion_liquid`、`low_vol_quality`/`industry_rotation`）待做。
+- [x] §6 初始策略序列四个插件全部接入：`tail_momentum_overnight`（迁移+金样锁定）、`trend_breakout`（唐奇安突破+突破前 MA 上行过滤，避免同窗 MA 恒上行的空转）、`mean_reversion_liquid`（相对跌前 MA5 超跌 + MA20 上方 + 流动性门）、`low_vol_quality`（低波动 + 长均线上方 + 流动性门）；均含 config schema/README/注册与 fail-closed 校验。`industry_rotation` 作为 #4 的替代选项未做。
 
 - [x] 插件已迁移下午动量、成交量、趋势、相对强弱、风险与市场环境完整评分链路，并通过 PIT 分钟数据生成标准信号；固定夹具评分与 `results/signals_2026-09-15.json` 的空候选、Bear 环境和门槛 80 对齐。
 - [x] 金样 `excluded_count=1` 的排除路径已锁定：当日抓取失败标的的原始响应未保存（离线不可补录），固定夹具以合成标的（分时为空 → `NO_MINUTE_DATA`）建模该失败症状，金样锁定测试现与 `results/signals_2026-09-15.json` 逐字段一致；合成来源已在 `tests/fixtures/README.md` 披露。
