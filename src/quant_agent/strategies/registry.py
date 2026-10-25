@@ -7,9 +7,14 @@ from typing import Any, Callable, Protocol
 
 @dataclass(frozen=True, slots=True)
 class StrategyMetadata:
+    """FR-1.2: plugins declare their turnover ceiling and risk exposure so
+    the portfolio layer can constrain by declaration."""
+
     strategy_id: str
     version: str
     frequency: str
+    turnover_cap: float | None = None
+    risk_exposure: str | None = None
 
 
 class Strategy(Protocol):
@@ -37,14 +42,24 @@ class PluginRunResult:
 class StrategyRegistry:
     def __init__(self):
         self._strategies: dict[str, Strategy] = {}
+        self._version_history: dict[str, dict[str, Strategy]] = {}
+        self._enabled: set[str] = set()
 
     def register(self, strategy: Strategy) -> None:
         metadata = getattr(strategy, "metadata", None)
         if metadata is None or not getattr(metadata, "strategy_id", ""):
             raise ValueError("strategy metadata with strategy_id is required")
-        if metadata.strategy_id in self._strategies:
-            raise ValueError(f"duplicate strategy id: {metadata.strategy_id}")
-        self._strategies[metadata.strategy_id] = strategy
+        strategy_id = metadata.strategy_id
+        if strategy_id in self._strategies and (
+            self._strategies[strategy_id].metadata.version
+            == metadata.version
+        ):
+            raise ValueError(f"duplicate strategy id: {strategy_id}")
+        # FR-1: keep every registered version for rollback; the live slot
+        # holds the newest, enabled by default (FR-1 启停).
+        self._version_history.setdefault(strategy_id, {})[metadata.version] = strategy
+        self._strategies[strategy_id] = strategy
+        self._enabled.add(strategy_id)
 
     def get(self, strategy_id: str) -> Strategy:
         try:
@@ -52,20 +67,45 @@ class StrategyRegistry:
         except KeyError:
             raise KeyError(f"unknown strategy: {strategy_id}") from None
 
+    def disable(self, strategy_id: str) -> None:
+        self._require_known(strategy_id)
+        self._enabled.discard(strategy_id)
+
+    def enable(self, strategy_id: str) -> None:
+        self._require_known(strategy_id)
+        self._enabled.add(strategy_id)
+
+    def rollback(self, strategy_id: str, version: str) -> None:
+        """Point the live slot at a previously registered version; the
+        newer version stays in history for a later rollback forward."""
+        self._require_known(strategy_id)
+        history = self._version_history[strategy_id]
+        if version not in history:
+            raise KeyError(f"unknown version {version} for {strategy_id}")
+        self._strategies[strategy_id] = history[version]
+
+    def _require_known(self, strategy_id: str) -> None:
+        if strategy_id not in self._strategies:
+            raise KeyError(f"unknown strategy: {strategy_id}")
+
     def list(self) -> list[StrategyMetadata]:
         return [
             strategy.metadata
-            for strategy in self._strategies.values()
-            if hasattr(strategy, "metadata")
+            for strategy_id, strategy in self._strategies.items()
+            if strategy_id in self._enabled and hasattr(strategy, "metadata")
         ]
 
     def run_all(self, context, on_failure: Callable[[PluginFailure], None] | None = None):
         if not self._strategies:
             raise ValueError("No registered strategies")
+        if not self._enabled:
+            raise ValueError("all strategies are disabled")
 
         signals: list[object] = []
         failures = []
         for strategy_id, strategy in self._strategies.items():
+            if strategy_id not in self._enabled:
+                continue
             try:
                 signals.extend(strategy.on_snapshot(context))
             except Exception as exc:
