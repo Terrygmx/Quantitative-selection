@@ -21,7 +21,7 @@ python3 -m ruff check src/quant_agent tests
 python3 -m mypy src/quant_agent
 ```
 
-当前基线：330 个测试（329 通过；1 个 westock 真实缓存等价测试在无 cache/ 的环境跳过），覆盖率 92%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**；性能基准 68.5s（带宽 67–84s 内）。注：westock 真实缓存等价测试在无 cache/ 的环境跳过；此前个别提交信息中的测试计数与反引号文本有误，以本条与 git diff 为准。
+当前基线：341 个测试（340 通过；1 个 westock 真实缓存等价测试在无 cache/ 的环境跳过），覆盖率 92%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**；性能基准 68.5s（带宽 67–84s 内）。注：westock 真实缓存等价测试在无 cache/ 的环境跳过；此前个别提交信息中的测试计数与反引号文本有误，以本条与 git diff 为准。
 
 ## 最近完成的工作（本次会话：M7 队列 + M8 类型债务）
 
@@ -55,11 +55,16 @@ CLI 为本机 Go 二进制 `~/.local/bin/westock`（PATH 可见，无需 `WESTOC
 - `e691512` CLI `report show`（信号 JSON→文本，reporting 支持自定义标题）+ 回测 `--start/--end/--split`（样本内/外两段独立回测，FR-3.1）。
 - `05ec011` Agent 四角色工具边界（§8）：`agents/roles.py` 角色 allow/forbid 表，网关 `role_bindings` 强制执行（跨角色 `ROLE_TOOL_NOT_ALLOWED`、未知 Agent `AGENT_ROLE_UNKNOWN`，均审计；无绑定时行为不变）。
 
+## 最近完成（第五轮续）
+
+- `883043c` 回测 `--benchmark SYMBOL`（同一份 bars 的买入持有收益 + `excess_return`，未知标的 fail closed）与 `--window N`（连续滚动窗口逐段独立回测，与 `--split` 互斥）——FR-3.1 的滚动窗口/基准比较闭环。
+- `76ebbb5` CLI `agent review`（审计 JSONL → 总量/按状态/按 Agent 计数 + 拒绝明细，坏行 fail closed，FR-6 全部四条命令齐备）；`application/features.py` Feature Store（§5.4：特征名绑定唯一参数哈希，同名不同定义拒绝，值按 (name, symbol, 计算时点) 存取）。
+
 ## 剩余 TODO
 
-1. **回测能力**：分钟频、滚动窗口、基准比较（FR-3.1 未尽项）；CLI `agent review`（FR-6 未尽项）。
-2. **数据分层**：Curated Parquet 分区 + DuckDB 元数据、Feature Store（参数哈希与版本）、Raw Store 按来源存档。
-3. **角色工具实现**：四角色的具体工具函数本体（当前为边界与审计，工具执行体待接真实数据/草稿区）。
+1. **分钟频回测**（FR-3.1 唯一未尽项）：当前引擎为日频；分钟 bars 已有端口契约，需分钟事件时钟。
+2. **数据分层**：Curated Parquet 分区 + DuckDB 元数据、Raw Store 按来源存档（Feature Store 定义锁已就绪，缺持久化对接）。
+3. **角色工具实现**：四角色的具体工具函数本体（边界与审计已就绪，执行体待接真实数据/草稿区）。
 4. **部署**：dev/research/paper/prod 四环境配置、Docker Compose。
 5. **`industry_rotation`**：§6 #4 的替代策略选项，未做。
 6. **实盘接口**：PRD 非目标；另立评审。
