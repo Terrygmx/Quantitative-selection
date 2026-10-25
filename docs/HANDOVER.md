@@ -21,7 +21,7 @@ python3 -m ruff check src/quant_agent tests
 python3 -m mypy src/quant_agent
 ```
 
-当前基线（feat/minute-backtest 分支）：349 个测试（348 通过；1 个 westock 真实缓存等价测试在无 cache/ 的环境跳过），覆盖率 93%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**；日频性能基准不受影响。注：westock 真实缓存等价测试在无 cache/ 的环境跳过；此前个别提交信息中的测试计数与反引号文本有误，以本条与 git diff 为准。
+当前基线（main）：371 个测试（370 通过；1 个 westock 真实缓存等价测试在无 cache/ 的环境跳过），覆盖率 92%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**；性能基准 82.3s（带宽 67–84s 内）。注：westock 真实缓存等价测试在无 cache/ 的环境跳过；此前个别提交信息中的测试计数与反引号文本有误，以本条与 git diff 为准。
 
 ## 最近完成的工作（本次会话：M7 队列 + M8 类型债务）
 
@@ -64,14 +64,22 @@ CLI 为本机 Go 二进制 `~/.local/bin/westock`（PATH 可见，无需 `WESTOC
 
 - `fd7cffa` 分钟频回测（FR-3.1 最后一项）：`application/intraday.MinuteBacktestEngine` 每交易日按决策时刻（默认 14:31 尾盘快照语义）取最后可见分钟 bar 定价，PIT 防未来由端口构造保证，共享内核使分钟时间戳真实命中时段校验（午休决策被拒）；`backtest run --frequency minute --decision HHMM` 接入（CSV 需 available_at==bar 时间戳的重放约定；日频专用选项互斥）。review 修正 RUNBOOK/TODO 文档；FR-3.1 全部闭环。
 
-## 剩余 TODO
+## 最近完成（第六轮：五项剩余任务循环，main 分支）
 
-1. ~~分钟频回测~~ 已完成（见上）。
-2. **数据分层**：Curated Parquet 分区 + DuckDB 元数据、Raw Store 按来源存档（Feature Store 定义锁已就绪，缺持久化对接）。
-3. **角色工具实现**：四角色的具体工具函数本体（边界与审计已就绪，执行体待接真实数据/草稿区）。
-4. **部署**：dev/research/paper/prod 四环境配置、Docker Compose。
-5. **`industry_rotation`**：§6 #4 的替代策略选项，未做。
-6. **实盘接口**：PRD 非目标；另立评审。
+- 分支合并：`feat/minute-backtest`（分钟频回测）已 no-ff 合回 main。
+- `c3c9fd5` 数据分层：`RawStore`（内容寻址 sha256、source/date 分层、原子写、自愈恢复，verify=True 拒绝篡改）+ `CuratedStore`（Parquet 按 dataset/trade_date 分区 + DuckDB 元数据血缘）。
+- `710a39f`+`8003692` Agent 角色工具执行体：`RoleToolbox`——read_approved_dataset（PIT bars，DataUnavailable 转错误载荷不越界）、draft_experiment（status=draft + 免责声明，永不生产）、create_quality_event（追加型 JSONL）、explain_signal/explain_rejection（规则原因码→人类解释，不覆盖决策）。
+- `737b5e6` `industry_rotation`：行业动量排名取 top_n、仅正动量发信号（弱市空仓）；schema 校验器补 minProperties/additionalProperties(object)。
+- `b3273ed` 四环境配置（paper 唯一非 dry-run 且强制审批；prod 恒 dry-run，§9；无密钥有测试锁定）+ Dockerfile + docker-compose（paper 服务 dry-run 命令 + 审批卷；Docker 守护进程未运行，构建契约以静态校验+YAML 验证覆盖）。
+
+## 剩余 TODO（已无里程碑级未完成项）
+
+1. 网关→工具箱集成层（网关审计与 RoleToolbox 直接串联）。
+2. Curated/Feature Store 持久化对接（写入路径接 CuratedStore）。
+3. 深交所 docx 逐行解析（沪深对齐已由证监会官方发布确认）。
+4. 分钟引擎长历史查询的按日增量游标优化（性能基准只覆盖日频）。
+5. Docker 实机构建验证（本机守护进程未运行，静态契约已锁定）。
+6. 实盘接口：PRD 非目标；模拟盘稳定运行 + 人工审批验收后另立评审。
 
 ## 关键文件与约束
 
