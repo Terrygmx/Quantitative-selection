@@ -4,6 +4,26 @@ from datetime import date, timedelta
 from typing import Iterable, Protocol
 
 
+def parse_trading_days(lines: Iterable[str]) -> frozenset[date]:
+    """Parse external trading-day data: one ISO date per line, blank lines
+    and `#` comments allowed. Any other content fails closed instead of
+    silently shrinking the calendar."""
+    days: set[date] = set()
+    for number, raw in enumerate(lines, start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            days.add(date.fromisoformat(line))
+        except ValueError as exc:
+            raise ValueError(
+                f"calendar source line {number} is not an ISO date: {line!r}"
+            ) from exc
+    if not days:
+        raise ValueError("calendar source contains no trading days")
+    return frozenset(days)
+
+
 class TradingCalendar(Protocol):
     def is_trading_day(self, day: date) -> bool: ...
 
@@ -24,6 +44,13 @@ class StaticTradingCalendar:
 
     def previous_trading_day(self, day: date) -> date | None:
         return self._step(day, timedelta(days=-1))
+
+    def union(self, *others: "StaticTradingCalendar") -> "StaticTradingCalendar":
+        """Merge externally sourced years (e.g. 2027+) into this calendar."""
+        days = set(self._days)
+        for other in others:
+            days |= other._days
+        return StaticTradingCalendar(days)
 
     def _step(self, day: date, delta: timedelta) -> date | None:
         ordered = sorted(self._days)

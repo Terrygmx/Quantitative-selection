@@ -141,3 +141,51 @@ def test_builtin_calendar_is_shared_by_sse_and_szse():
     assert not sse.is_trading_day(date(2023, 10, 2))
     assert sse.next_trading_day(date(2026, 9, 30)) == date(2026, 10, 8)
     assert szse.next_trading_day(date(2026, 9, 30)) == date(2026, 10, 8)
+
+
+def test_parse_trading_days_accepts_one_iso_date_per_line():
+    from quant_agent.rules.calendar import parse_trading_days
+
+    days = parse_trading_days(
+        [
+            "2027-01-04",
+            "",
+            "# comment line",
+            "  2027-01-05  ",
+        ]
+    )
+
+    assert days == frozenset({date(2027, 1, 4), date(2027, 1, 5)})
+
+
+def test_parse_trading_days_rejects_invalid_lines_with_line_number():
+    from quant_agent.rules.calendar import parse_trading_days
+
+    with pytest.raises(ValueError, match="line 3"):
+        parse_trading_days(["2027-01-04", "", "not-a-date"])
+
+
+def test_parse_trading_days_fails_closed_on_empty_dataset():
+    from quant_agent.rules.calendar import parse_trading_days
+
+    with pytest.raises(ValueError, match="no trading days"):
+        parse_trading_days(["", "# nothing"])
+
+
+def test_union_merges_builtin_years_with_external_2027_days():
+    from quant_agent.rules.calendar import parse_trading_days
+
+    builtin = StaticTradingCalendar.for_cn_market()
+    external_2027 = StaticTradingCalendar(
+        parse_trading_days(["2027-01-04", "2027-01-05"])
+    )
+
+    merged = builtin.union(external_2027)
+
+    assert merged.is_trading_day(date(2026, 9, 30))
+    assert merged.is_trading_day(date(2027, 1, 4))
+    # Boundary navigation crosses the merged year.
+    assert merged.next_trading_day(date(2026, 12, 31)) == date(2027, 1, 4)
+    assert merged.previous_trading_day(date(2027, 1, 4)) == date(2026, 12, 31)
+    # Non-holiday weekend in 2027 stays closed because only supplied days trade.
+    assert not merged.is_trading_day(date(2027, 1, 9))
