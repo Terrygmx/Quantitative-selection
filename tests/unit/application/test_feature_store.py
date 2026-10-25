@@ -64,3 +64,47 @@ def test_put_records_the_computation_moment():
     store.put("ma_close", "sh600519", as_of, 10.5)
 
     assert store.stamp("ma_close", "sh600519", as_of) == as_of
+
+
+def test_feature_store_persists_values_and_definitions(tmp_path):
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("duckdb")
+    from datetime import datetime, timezone
+
+    from quant_agent.application.features import PersistentFeatureStore
+
+    as_of = datetime(2026, 9, 15, 15, 0, tzinfo=timezone.utc)
+    inner = FeatureStore()
+    inner.register(definition("ma_close", window=20))
+    inner.put("ma_close", "sh600519", as_of, 10.5)
+    store = PersistentFeatureStore(inner, tmp_path / "features")
+
+    path = store.flush()
+
+    assert path.exists()
+    reloaded = PersistentFeatureStore.load(tmp_path / "features")
+    assert reloaded.get("ma_close", "sh600519", as_of) == 10.5
+    assert reloaded.stamp("ma_close", "sh600519", as_of) == as_of
+    # Definitions survive the round trip with their hashes.
+    assert reloaded.definition_hash("ma_close") == inner.definition_hash("ma_close")
+
+
+def test_persistent_store_rejects_conflicting_definitions_on_load(tmp_path):
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("duckdb")
+    from datetime import datetime, timezone
+
+    from quant_agent.application.features import (
+        FeatureDefinition,
+        PersistentFeatureStore,
+    )
+
+    as_of = datetime(2026, 9, 15, 15, 0, tzinfo=timezone.utc)
+    inner = FeatureStore()
+    inner.register(definition("ma_close", window=20))
+    inner.put("ma_close", "sh600519", as_of, 10.5)
+    PersistentFeatureStore(inner, tmp_path / "features").flush()
+
+    reloaded = PersistentFeatureStore.load(tmp_path / "features")
+    with pytest.raises(ValueError, match="ma_close"):
+        reloaded.register(FeatureDefinition(name="ma_close", params={"window": 60}))

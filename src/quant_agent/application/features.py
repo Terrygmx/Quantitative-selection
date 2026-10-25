@@ -6,9 +6,11 @@ stamped with their computation moment."""
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Mapping, Union
 
 
@@ -75,3 +77,67 @@ class FeatureStore:
 
     def stamp(self, name: str, symbol: str, as_of: datetime) -> datetime:
         return self._stamps[(name, symbol, as_of)]
+
+
+class PersistentFeatureStore:
+    """FeatureStore whose values and definition hashes flush to a Curated
+    Parquet partition; load() rebuilds an equivalent in-memory store and
+    keeps the definition-lock semantics across processes."""
+
+    def __init__(self, store: FeatureStore, root: str | Path):
+        self.store = store
+        self.root = Path(root)
+
+    def __getattr__(self, name: str):
+        return getattr(self.store, name)
+
+    def flush(self) -> Path:
+        """Write values as a Parquet partition plus definitions JSON."""
+        parquet = importlib.import_module("pyarrow.parquet")
+        self.root.mkdir(parents=True, exist_ok=True)
+        rows = [
+            {
+                "feature": name,
+                "symbol": symbol,
+                "as_of": as_of.isoformat(),
+                "value": value,
+                "stamp": self.store.stamp(name, symbol, as_of).isoformat(),
+            }
+            for (name, symbol, as_of), value in sorted(
+                self.store._values.items(), key=lambda item: (item[0][0], item[0][1], item[0][2])
+            )
+        ]
+        pa = importlib.import_module("pyarrow")
+        table = pa.table(
+            {
+                "feature": [row["feature"] for row in rows],
+                "symbol": [row["symbol"] for row in rows],
+                "as_of": [row["as_of"] for row in rows],
+                "value": [row["value"] for row in rows],
+                "stamp": [row["stamp"] for row in rows],
+            }
+        )
+        path = self.root / "values.parquet"
+        parquet.write_table(table, path)
+        (self.root / "definitions.json").write_text(
+            json.dumps(self.store._definitions, ensure_ascii=False, sort_keys=True, indent=1) + "\n",
+            encoding="utf-8",
+        )
+        return path
+
+    @classmethod
+    def load(cls, root: str | Path) -> "PersistentFeatureStore":
+        parquet = importlib.import_module("pyarrow.parquet")
+        root_path = Path(root)
+        definitions = json.loads(
+            (root_path / "definitions.json").read_text(encoding="utf-8")
+        )
+        store = FeatureStore()
+        for name, digest in definitions.items():
+            store._definitions[name] = digest
+        table = parquet.read_table(root_path / "values.parquet")
+        for row in table.to_pylist():
+            as_of = datetime.fromisoformat(row["as_of"])
+            store._values[(row["feature"], row["symbol"], as_of)] = row["value"]
+            store._stamps[(row["feature"], row["symbol"], as_of)] = datetime.fromisoformat(row["stamp"])
+        return cls(store, root_path)
