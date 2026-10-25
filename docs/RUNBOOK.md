@@ -42,6 +42,19 @@ rules = TradingRulesPlugin(calendar)
 
 `load()` 只用文件数据构建日历；`extend_builtin()` 把文件合并进内置 2023–2026 数据。未提供数据文件的年份保持「非交易日」而不是猜测节假日。
 
+## 策略与回测命令
+
+```bash
+# 列出已注册的策略插件（显式注册表，JSON 输出）
+PYTHONPATH=src python3 -m quant_agent.cli.strategy list
+
+# 对 CSV 日线跑多标的回测（同一共享成交内核与 A 股规则）
+PYTHONPATH=src python3 -m quant_agent.cli.backtest run \
+  --bars bars.csv --instruments instruments.json --config costs.json [--exchange SSE]
+```
+
+`--bars` 使用数据适配器的 CSV 列契约（见「数据适配器」）；`--instruments` 为 `Instrument` 字段的 JSON 数组；`--config` 提供 `initial_cash/buy_quantity/commission_rate/stamp_tax_rate/slippage_rate`。输出 orders/fills/summary JSON；配置错误退出码 2。
+
 ## 模拟盘命令
 
 模拟盘只接受已保存审批的策略配置。审批文件默认位于 `state/paper-approvals.json`，记录策略 ID、配置哈希和批准人；配置内容本身必须包含相同的 `config_hash`。

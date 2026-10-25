@@ -44,7 +44,7 @@ def _bars_for_engine(
     for symbol in symbols:
         rows = port.bars(symbol, as_of)
         previous_close: float | None = None
-        entries = []
+        entries: list[Mapping[str, object]] = []
         for row in rows:
             close = row.close
             entries.append(

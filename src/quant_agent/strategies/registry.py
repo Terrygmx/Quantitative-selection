@@ -63,7 +63,7 @@ class StrategyRegistry:
         if not self._strategies:
             raise ValueError("No registered strategies")
 
-        signals = []
+        signals: list[object] = []
         failures = []
         for strategy_id, strategy in self._strategies.items():
             try:
