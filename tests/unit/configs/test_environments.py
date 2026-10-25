@@ -42,3 +42,44 @@ def test_no_secrets_in_environment_files():
         text = path.read_text(encoding="utf-8").lower()
         for forbidden in ("password", "token", "api_key", "secret"):
             assert forbidden not in text, f"{path.name} mentions {forbidden}"
+
+
+def test_execution_layer_has_no_live_channel():
+    """PRD non-goal made structural: the execution surface exposes the
+    PaperExecution protocol and exactly one concrete simulated executor;
+    no live/real/broker executor type exists anywhere in the package."""
+    import inspect
+    import pathlib
+
+    import quant_agent.agents.paper as paper_module
+
+    executor_classes = [
+        name
+        for name, obj in vars(paper_module).items()
+        if inspect.isclass(obj) and hasattr(obj, "execute")
+    ]
+    assert set(executor_classes) == {"PaperExecution", "SimulatedPaperExecution"}
+
+    package_root = pathlib.Path(paper_module.__file__).parent
+    for path in package_root.glob("*.py"):
+        for forbidden in ("LiveExecution", "RealExecution", "BrokerExecution"):
+            assert forbidden not in path.read_text(encoding="utf-8"), (
+                f"{path.name} mentions {forbidden}"
+            )
+
+
+def test_paper_gateway_rejects_live_session_markers():
+
+    from quant_agent.agents.gateway import AgentGateway, AgentRequest
+
+    gateway = AgentGateway(allowed_tools={"read_approved_dataset"})
+
+    result = gateway.execute(
+        AgentRequest(
+            agent_id="any",
+            tool="submit_live_order",
+            arguments={},
+        )
+    )
+
+    assert result.status == "denied"
