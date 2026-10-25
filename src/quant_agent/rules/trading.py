@@ -11,10 +11,12 @@ from quant_agent.rules.calendar import TradingCalendar
 
 
 CHINEXT_20_PERCENT_START = date(2020, 8, 24)
+MAIN_BOARD_NO_LIMIT_LISTING_START = date(2023, 2, 17)
+STAR_NO_LIMIT_LISTING_START = date(2019, 7, 22)
 CN_MARKET_TZ = ZoneInfo("Asia/Shanghai")
-# After-hours fixed-price trading (盘后定价交易) exists on STAR/ChiNext only,
-# 15:05-15:30, and fills at the day's closing price.
-AFTER_HOURS_FIXED_PRICE_BOARDS = frozenset({"STAR", "ChiNext"})
+# After-hours fixed-price trading (盘后定价交易) covers all A-share boards
+# since the 2026 rules (SSE 3.7.1): submission 9:30-11:30 / 13:00-15:30,
+# matching 15:05-15:30 at the day's closing price.
 AFTER_HOURS_START = time(15, 5)
 AFTER_HOURS_END = time(15, 30)
 
@@ -83,21 +85,18 @@ class TradingRulesPlugin:
         return self.calendar.is_trading_day(day) if self.calendar else day.weekday() < 5
 
     @staticmethod
-    def _in_after_hours_fixed_price_session(instrument: Instrument, clock: time) -> bool:
-        return (
-            instrument.board in AFTER_HOURS_FIXED_PRICE_BOARDS
-            and AFTER_HOURS_START <= clock <= AFTER_HOURS_END
-        )
+    def _in_after_hours_fixed_price_session(clock: time) -> bool:
+        return AFTER_HOURS_START <= clock <= AFTER_HOURS_END
 
     def is_after_hours_fixed_price_session(
         self, instrument: Instrument, as_of: datetime
     ) -> bool:
-        """Whether `as_of` falls in the STAR/ChiNext after-hours fixed-price
-        session, where fills happen exactly at the closing price."""
+        """Whether `as_of` falls in the after-hours fixed-price session
+        (all A-share boards), where fills happen at the closing price."""
         local_clock = (
             as_of.astimezone(CN_MARKET_TZ).time().replace(tzinfo=None)
         )
-        return self._in_after_hours_fixed_price_session(instrument, local_clock)
+        return self._in_after_hours_fixed_price_session(local_clock)
 
     def after_hours_submission_gate(
         self, instrument: Instrument, as_of: datetime
@@ -109,11 +108,6 @@ class TradingRulesPlugin:
             return Rejection("INSTRUMENT_NOT_ACTIVE", "")
         if not self._is_trading_day(local.date()):
             return Rejection("NON_TRADING_DAY", "")
-        if instrument.board not in AFTER_HOURS_FIXED_PRICE_BOARDS:
-            return Rejection(
-                "AFTER_HOURS_BOARD_NOT_SUPPORTED",
-                "after-hours fixed-price trading is STAR/ChiNext only",
-            )
         clock = local.time().replace(tzinfo=None)
         morning = time(9, 30) <= clock <= time(11, 30)
         afternoon = time(13, 0) <= clock <= time(15, 30)
@@ -135,7 +129,7 @@ class TradingRulesPlugin:
         afternoon = time(13, 0) <= local_clock <= time(15, 0)
         if morning or afternoon:
             return Tradeability(True)
-        if self._in_after_hours_fixed_price_session(instrument, local_clock):
+        if self._in_after_hours_fixed_price_session(local_clock):
             return Tradeability(True)
         return Tradeability(False, "OUTSIDE_CONTINUOUS_AUCTION")
 
@@ -231,16 +225,23 @@ class TradingRulesPlugin:
         local_clock = (
             order.created_at.astimezone(CN_MARKET_TZ).time().replace(tzinfo=None)
         )
-        if (
-            self._in_after_hours_fixed_price_session(instrument, local_clock)
-            and order.limit_price != market.last
-        ):
-            return [
-                Rejection(
-                    "INVALID_AFTER_HOURS_PRICE",
-                    "after-hours orders must price at the closing price",
-                )
-            ]
+        if self._in_after_hours_fixed_price_session(local_clock):
+            # SSE 2026 rules 3.7.5: a buy is invalid when the close exceeds
+            # its limit; a sell is invalid when the close falls below it.
+            if order.side == "buy" and order.limit_price < market.last:
+                return [
+                    Rejection(
+                        "INVALID_AFTER_HOURS_PRICE",
+                        "closing price is above the buy order limit",
+                    )
+                ]
+            if order.side == "sell" and order.limit_price > market.last:
+                return [
+                    Rejection(
+                        "INVALID_AFTER_HOURS_PRICE",
+                        "closing price is below the sell order limit",
+                    )
+                ]
         return []
 
     def validate_fill_price(

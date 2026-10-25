@@ -315,7 +315,9 @@ def test_validate_order_rejects_legacy_market_mapping():
         ("STAR", "SSE", datetime(2026, 9, 15, 15, 20, tzinfo=CN_TZ), True),
         ("STAR", "SSE", datetime(2026, 9, 15, 15, 30, tzinfo=CN_TZ), True),
         ("ChiNext", "SZSE", datetime(2026, 9, 15, 15, 10, tzinfo=CN_TZ), True),
-        ("MainBoard", "SSE", datetime(2026, 9, 15, 15, 10, tzinfo=CN_TZ), False),
+        # After-hours fixed-price trading covers all A-share boards since the
+        # 2026 rules (SSE 3.7.1), verified online 2026-10-25.
+        ("MainBoard", "SSE", datetime(2026, 9, 15, 15, 10, tzinfo=CN_TZ), True),
         ("STAR", "SSE", datetime(2026, 9, 15, 15, 4, tzinfo=CN_TZ), False),
         ("STAR", "SSE", datetime(2026, 9, 15, 15, 31, tzinfo=CN_TZ), False),
         # Continuous auction keeps its own boundaries for every board.
@@ -330,7 +332,9 @@ def test_after_hours_fixed_price_session_matrix(board, exchange, moment, tradabl
     assert rules.tradeability(item, moment).tradable is tradable
 
 
-def test_after_hours_order_fills_only_at_closing_price():
+def test_after_hours_limit_price_is_a_side_aware_inequality():
+    """SSE 2026 rules 3.7.5: a buy is invalid only when the close exceeds
+    its limit; a sell is invalid only when the close falls below its limit."""
     rules = TradingRulesPlugin(StaticTradingCalendar.for_exchange("SSE"))
     star = instrument(symbol="sh688001", board="STAR", exchange="SSE")
     market = MarketSnapshot(
@@ -339,22 +343,38 @@ def test_after_hours_order_fills_only_at_closing_price():
         previous_close=Decimal("10.00"),
     )
 
-    def after_hours_order(price):
+    def after_hours_order(price, side="buy"):
         return order(
             symbol="sh688001",
+            side=side,
             limit_price=price,
             created_at=datetime(2026, 9, 15, 15, 10, tzinfo=CN_TZ),
         )
 
-    at_close = rules.validate_order(
+    # Buy limits at or above the close stay valid and fill at the close.
+    assert rules.validate_order(
         after_hours_order(Decimal("10.00")), portfolio("sh688001"), market
+    ) == []
+    assert rules.validate_order(
+        after_hours_order(Decimal("10.02")), portfolio("sh688001"), market
+    ) == []
+    below_close = rules.validate_order(
+        after_hours_order(Decimal("9.99")), portfolio("sh688001"), market
     )
-    assert at_close == []
+    assert [item.code for item in below_close] == ["INVALID_AFTER_HOURS_PRICE"]
 
-    off_close = rules.validate_order(
-        after_hours_order(Decimal("10.01")), portfolio("sh688001"), market
+    # Sell limits at or below the close stay valid.
+    assert rules.validate_order(
+        after_hours_order(Decimal("9.98"), side="sell"),
+        portfolio("sh688001", settled=100),
+        market,
+    ) == []
+    above_close = rules.validate_order(
+        after_hours_order(Decimal("10.01"), side="sell"),
+        portfolio("sh688001", settled=100),
+        market,
     )
-    assert [item.code for item in off_close] == ["INVALID_AFTER_HOURS_PRICE"]
+    assert [item.code for item in above_close] == ["INVALID_AFTER_HOURS_PRICE"]
 
 
 def test_continuous_auction_orders_are_not_bound_to_closing_price():
@@ -426,7 +446,9 @@ def test_after_hours_marked_orders_follow_submission_window():
     assert [item.code for item in late] == ["OUTSIDE_AFTER_HOURS_SUBMISSION_WINDOW"]
 
 
-def test_after_hours_marked_orders_reject_non_eligible_boards():
+def test_after_hours_marked_orders_accept_main_board_since_2026_rules():
+    """SSE 2026 rules 3.7.1 opens after-hours fixed-price trading to all
+    A-share boards; the old STAR/ChiNext-only restriction is superseded."""
     rules = TradingRulesPlugin(StaticTradingCalendar.for_exchange("SSE"))
     main = instrument(symbol="sh600519", board="MainBoard", exchange="SSE")
     market = MarketSnapshot(
@@ -443,31 +465,33 @@ def test_after_hours_marked_orders_reject_non_eligible_boards():
         market,
     )
 
-    assert [item.code for item in rejections] == ["AFTER_HOURS_BOARD_NOT_SUPPORTED"]
+    assert rejections == []
 
 
-def test_after_hours_marked_orders_in_session_still_need_closing_price():
+def test_after_hours_marked_orders_in_session_follow_limit_inequality():
     rules = TradingRulesPlugin(StaticTradingCalendar.for_exchange("SSE"))
     star = instrument(symbol="sh688001", board="STAR", exchange="SSE")
     market = MarketSnapshot(
         instrument=star, last=Decimal("10.00"), previous_close=Decimal("10.00")
     )
 
-    off_close = rules.validate_order(
-        after_hours_marked_order(datetime(2026, 9, 15, 15, 10, tzinfo=CN_TZ)),
-        portfolio("sh688001"),
-        market,
-    )
-    assert [item.code for item in off_close] == ["INVALID_AFTER_HOURS_PRICE"]
-
-    at_close = rules.validate_order(
+    below_close = rules.validate_order(
         after_hours_marked_order(
-            datetime(2026, 9, 15, 15, 10, tzinfo=CN_TZ), price=Decimal("10.00")
+            datetime(2026, 9, 15, 15, 10, tzinfo=CN_TZ), price=Decimal("9.99")
         ),
         portfolio("sh688001"),
         market,
     )
-    assert at_close == []
+    assert [item.code for item in below_close] == ["INVALID_AFTER_HOURS_PRICE"]
+
+    above_close = rules.validate_order(
+        after_hours_marked_order(
+            datetime(2026, 9, 15, 15, 10, tzinfo=CN_TZ), price=Decimal("10.02")
+        ),
+        portfolio("sh688001"),
+        market,
+    )
+    assert above_close == []
 
 
 def test_limit_board_rejections_are_side_aware():

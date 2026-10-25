@@ -502,8 +502,10 @@ def test_stale_after_hours_intents_expire_next_day():
     assert len(paper.after_hours_queue) == 1
 
 
-def test_after_hours_session_rejects_ineligible_submissions():
-    paper = execution()  # MainBoard instruments
+def test_after_hours_session_accepts_main_board_since_2026_rules():
+    """SSE 2026 rules 3.7.1 extend after-hours fixed-price trading to all
+    A-share boards, so a MainBoard paper order fills at the close."""
+    paper = execution()
     config = {
         "config_hash": "hash-1",
         "session": "after_hours_fixed",
@@ -514,8 +516,10 @@ def test_after_hours_session_rejects_ineligible_submissions():
     }
 
     orders = paper.execute(
-        "tail_momentum_overnight", config, RUN_AT
+        "tail_momentum_overnight",
+        config,
+        datetime(2026, 10, 26, 15, 10, tzinfo=CN_TZ),
     )
 
-    assert orders[0]["status"] == "REJECTED"
-    assert orders[0]["reason_code"] == "AFTER_HOURS_BOARD_NOT_SUPPORTED"
+    assert orders[0]["status"] == "FILLED"
+    assert Decimal(str(orders[0]["price"])) == Decimal("10.05")
