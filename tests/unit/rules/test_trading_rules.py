@@ -468,3 +468,104 @@ def test_after_hours_marked_orders_in_session_still_need_closing_price():
         market,
     )
     assert at_close == []
+
+
+def test_limit_board_rejections_are_side_aware():
+    """Market mechanics at the band edges: at limit-up only buyers queue
+    (sell fills into the buy queue); at limit-down only sellers queue."""
+    rules = TradingRulesPlugin()
+    at_limit_up = MarketSnapshot(
+        instrument=instrument(),
+        last=Decimal("11.00"),
+        previous_close=Decimal("10.00"),
+    )
+    at_limit_down = MarketSnapshot(
+        instrument=instrument(),
+        last=Decimal("9.00"),
+        previous_close=Decimal("10.00"),
+    )
+
+    sell_into_buy_queue = rules.validate_order(
+        order(side="sell", limit_price=Decimal("11.00")),
+        portfolio(settled=100),
+        at_limit_up,
+    )
+    assert sell_into_buy_queue == []
+
+    buy_into_sell_queue = rules.validate_order(
+        order(limit_price=Decimal("9.00")),
+        portfolio(),
+        at_limit_down,
+    )
+    assert buy_into_sell_queue == []
+
+    buy_at_limit_up = rules.validate_order(
+        order(limit_price=Decimal("11.00")), portfolio(), at_limit_up
+    )
+    assert [item.code for item in buy_at_limit_up] == ["LIMIT_UP"]
+
+    sell_at_limit_down = rules.validate_order(
+        order(side="sell", limit_price=Decimal("9.00")),
+        portfolio(settled=100),
+        at_limit_down,
+    )
+    assert [item.code for item in sell_at_limit_down] == ["LIMIT_DOWN"]
+
+
+def test_out_of_band_breach_keeps_price_band_code_per_side():
+    """An out-of-band price is a band breach; the limit-up/limit-down queue
+    codes belong to the queueing side only."""
+    rules = TradingRulesPlugin()
+    at_limit_up = MarketSnapshot(
+        instrument=instrument(),
+        last=Decimal("11.00"),
+        previous_close=Decimal("10.00"),
+    )
+    at_limit_down = MarketSnapshot(
+        instrument=instrument(),
+        last=Decimal("9.00"),
+        previous_close=Decimal("10.00"),
+    )
+
+    sell_above_ceiling = rules.validate_order(
+        order(side="sell", limit_price=Decimal("11.01")),
+        portfolio(settled=100),
+        at_limit_up,
+    )
+    assert [item.code for item in sell_above_ceiling] == ["PRICE_BAND"]
+
+    buy_below_floor = rules.validate_order(
+        order(limit_price=Decimal("8.99")),
+        portfolio(),
+        at_limit_down,
+    )
+    assert [item.code for item in buy_below_floor] == ["PRICE_BAND"]
+
+
+def test_new_listing_without_price_band_validates_orders_without_crashing():
+    """First-five-day STAR/ChiNext listings have no price band; validating an
+    order for them must skip band checks, not crash on the None band."""
+    rules = TradingRulesPlugin()
+    new_listing = instrument(
+        symbol="sh688001",
+        board="STAR",
+        exchange="SSE",
+        listing_date=date(2024, 1, 2),
+    )
+    market = MarketSnapshot(
+        instrument=new_listing,
+        last=Decimal("12.00"),
+        previous_close=Decimal("10.00"),
+    )
+
+    rejections = rules.validate_order(
+        order(
+            symbol="sh688001",
+            limit_price=Decimal("12.00"),
+            created_at=datetime(2024, 1, 2, 14, 31, tzinfo=CN_TZ),
+        ),
+        portfolio("sh688001"),
+        market,
+    )
+
+    assert rejections == []

@@ -198,18 +198,36 @@ class TradingRulesPlugin:
             market.previous_close,
             order.created_at.date(),
         )
-        if order.limit_price > band.ceiling:
-            if market.last == band.ceiling:
-                return [Rejection("LIMIT_UP", "order cannot fill at limit-up price")]
-            return [Rejection("PRICE_BAND", "limit price is above the allowed price band")]
-        if order.limit_price < band.floor:
-            if market.last == band.floor:
-                return [Rejection("LIMIT_DOWN", "order cannot fill at limit-down price")]
-            return [Rejection("PRICE_BAND", "limit price is below the allowed price band")]
-        if order.limit_price == band.ceiling and market.last == band.ceiling:
-            return [Rejection("LIMIT_UP", "order cannot fill at limit-up price")]
-        if order.limit_price == band.floor and market.last == band.floor:
-            return [Rejection("LIMIT_DOWN", "order cannot fill at limit-down price")]
+        if band is not None:
+            # Only the queueing side cannot fill at a locked band edge:
+            # buyers queue at limit-up, sellers queue at limit-down; the
+            # opposite side fills into that queue.
+            if order.limit_price > band.ceiling:
+                if order.side == "buy" and market.last == band.ceiling:
+                    return [Rejection("LIMIT_UP", "buy orders queue at limit-up")]
+                return [
+                    Rejection("PRICE_BAND", "limit price is above the allowed price band")
+                ]
+            if order.limit_price < band.floor:
+                if order.side == "sell" and market.last == band.floor:
+                    return [Rejection("LIMIT_DOWN", "sell orders queue at limit-down")]
+                return [
+                    Rejection(
+                        "PRICE_BAND", "limit price is below the allowed price band"
+                    )
+                ]
+            if (
+                order.limit_price == band.ceiling
+                and market.last == band.ceiling
+                and order.side == "buy"
+            ):
+                return [Rejection("LIMIT_UP", "buy orders queue at limit-up")]
+            if (
+                order.limit_price == band.floor
+                and market.last == band.floor
+                and order.side == "sell"
+            ):
+                return [Rejection("LIMIT_DOWN", "sell orders queue at limit-down")]
         local_clock = (
             order.created_at.astimezone(CN_MARKET_TZ).time().replace(tzinfo=None)
         )
