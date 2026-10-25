@@ -38,9 +38,9 @@ def _decimal(value: object, field: str) -> Decimal:
 
 def _bars_for_engine(
     port: CsvMarketDataPort, symbols: Sequence[str]
-) -> dict[str, list[dict[str, object]]]:
+) -> dict[str, list[Mapping[str, object]]]:
     as_of = datetime.now(timezone.utc)
-    bars: dict[str, list[dict[str, object]]] = {}
+    bars: dict[str, list[Mapping[str, object]]] = {}
     for symbol in symbols:
         rows = port.bars(symbol, as_of)
         previous_close: float | None = None
@@ -103,8 +103,8 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
     )
     events = engine.run()
 
-    orders = []
-    fills = []
+    orders: list[dict[str, object]] = []
+    fills: list[Mapping[str, object]] = []
     for event in events:
         if event.order is not None:
             state = engine.order_states.get(event.order.id)

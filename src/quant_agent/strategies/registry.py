@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
@@ -17,7 +18,7 @@ class Strategy(Protocol):
 
     metadata: StrategyMetadata
 
-    def on_snapshot(self, context: Any) -> list[object]: ...
+    def on_snapshot(self, context: Any) -> Sequence[object]: ...
 
 
 @dataclass(frozen=True, slots=True)
