@@ -21,17 +21,25 @@ python3 -m ruff check src/quant_agent tests
 python3 -m mypy src/quant_agent
 ```
 
-当前基线：283 个测试全绿，覆盖率 94%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**。
+当前基线：293 个测试全绿，覆盖率 94%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**（DuckDB 在契约套件实跑）。
 
 ## 最近完成的工作（本次会话：M7 队列 + M8 类型债务）
 
 - `dcf37e3` M7 盘后延迟撮合队列：策略配置顶层 `"session": "after_hours_fixed"`（默认 `continuous`，非法值 fail closed）；盘中申报先过（已公开的）规则申报门，进 `AfterHoursIntent` 日级队列（`QUEUED_AFTER_HOURS`，不动现金持仓）；15:05–15:30 内运行时按当时快照 `last`（收盘价）无滑点撮合，走共享内核、规则全量裁决；跨日意图 `EXPIRED`；撮合结果保留意图 id 并附 `submitted_at`。两次测试期望修正均附理由（15:10 运行会同时撮合排队意图并立即成交新申报；重复申报累积队列）。
 - `72fa635` M8 类型债务清零：mypy 41（会话起点）→ 0 并入 CI。要点：金样引擎 `bars` 注解由错误的 `Mapping[str, object]` 改为 `Sequence[Mapping[str, object]]`（原注解使 `list(bars)` 成为键列表）、`_bar_date` 校验辅助、`Event` 携带 `OrderRecord`；registry 落实 DETAILED_DESIGN §4 的 `Strategy` 协议；portfolio/metrics 对非数值输入以 ValueError fail closed（修掉字符串价格字典序比较胜率的静默错误）；`memory_audit_sink` 去掉错误的 `-> None`。
 
-## 剩余 TODO（均受离线约束，如实保留）
+## 最近完成（补：网络授权后的两项）
 
-1. **DuckDB 适配器**（M3）：`duckdb` 离线不可安装；依赖可用后照 CSV/Parquet 工厂模式参数化接入契约套件即可。
-2. **规则引用在线核对**（M2）：联网后逐条核对 `rules/references.py` 的条文与文号并置 `verified_online=True`；2023–2026 节假日静态数据逐年核对。
+- `d08c681` + `26a7f64` DuckDB 适配器：`DuckDBMarketDataPort`（`bars` 表、TIMESTAMPTZ 列、只读连接、全部读错误 fail closed）接入契约套件第四套参数化实现；`duckdb==2.0.0` 列入 requirements-dev 由 CI 覆盖。
+- `7fb758a` 规则引用在线核对：全部 8 个领域对照上交所《交易规则（2026 年修订）》（上证发〔2026〕41 号）原文与官方休市公告核实，登记表带条款号证据。
+- `d90721f` 核对差异修复 1：盘后定价全市场适用（3.7.1，废除板块限制）+ 限价不等式（3.7.5，买：收盘价高于限价才无效；卖反之）。
+- `20d9832` 核对差异修复 2：静态日历补 2026-02-23 春节休市（上交所公告逐日核对后唯一差异）。
+- `f76d76d` 核对差异修复 3：新股前 5 日无涨跌幅按板块注册制落地日期建模（主板 2023-02-17、创业 2020-08-24、科创 2019-07-22）。
+
+## 剩余 TODO
+
+1. **westock 在线适配**：等用户给出 westock CLI 路径（`WESTOCK_CLI` 或 `--westock-cli`）；解析逻辑可先离线 TDD。
+2. **2023–2025 节假日逐年复核** + **深交所规则原文逐条取文**（2026 与上交所侧已核对）。
 3. **实盘接口**：PRD 非目标；需模拟盘稳定运行与人工审批流程验收后另立评审。
 
 ## 关键文件与约束
