@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Industry rotation configuration",
+  "type": "object",
+  "required": ["industry_universe"],
+  "properties": {
+    "industry_universe": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1},
+      "minProperties": 1
+    },
+    "momentum_window": {"type": "integer", "minimum": 5},
+    "top_n": {"type": "integer", "minimum": 1, "maximum": 10},
+    "holding_days": {"type": "integer", "minimum": 1, "maximum": 60}
+  },
+  "additionalProperties": false
+}

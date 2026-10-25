@@ -55,3 +55,13 @@ def validate_value(field: str, value: Any, schema: Mapping[str, Any]) -> None:
         minimum_length = schema.get("minLength")
         if minimum_length is not None and len(value) < minimum_length:
             raise ValueError(f"{field} must have length >= minLength {minimum_length}")
+    if expected == "object":
+        minimum_props = schema.get("minProperties")
+        if minimum_props is not None and len(value) < minimum_props:
+            raise ValueError(
+                f"{field} must contain at least minProperties {minimum_props}"
+            )
+        additional = schema.get("additionalProperties")
+        if isinstance(additional, dict):
+            for key, item in value.items():
+                validate_value(f"{field}.{key}", item, additional)
