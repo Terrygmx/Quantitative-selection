@@ -39,12 +39,36 @@ def test_calendar_returns_none_at_boundaries():
         (date(2024, 1, 2), True),
         (date(2024, 2, 8), True),
         (date(2024, 2, 10), False),
+        (date(2024, 2, 12), False),
+        (date(2024, 2, 13), False),
+        (date(2024, 2, 14), False),
         (date(2024, 2, 18), False),
         (date(2024, 12, 31), True),
     ],
 )
 def test_builtin_sse_calendar_holidays_keep_weekends_closed(day, expected):
     calendar = StaticTradingCalendar.for_sse_2024()
+
+    # SSE 2024 Spring Festival closure: Feb 9-17 (resume Feb 19), verified
+    # online against the exchange announcement on 2026-10-25.
+    assert calendar.is_trading_day(day) is expected
+    assert calendar.next_trading_day(date(2024, 2, 8)) == date(2024, 2, 19)
+
+
+@pytest.mark.parametrize(
+    ("day", "expected"),
+    [
+        (date(2025, 1, 1), False),
+        (date(2025, 1, 2), True),
+        (date(2025, 2, 5), True),
+        (date(2025, 6, 2), False),
+        (date(2025, 10, 1), False),
+        (date(2025, 10, 8), False),
+        (date(2025, 10, 9), True),
+    ],
+)
+def test_builtin_calendar_covers_2025_holidays(day, expected):
+    calendar = StaticTradingCalendar.for_sse_2025()
 
     assert calendar.is_trading_day(day) is expected
 

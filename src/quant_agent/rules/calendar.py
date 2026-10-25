@@ -95,9 +95,14 @@ class StaticTradingCalendar:
 
     @classmethod
     def for_sse_2024(cls) -> "StaticTradingCalendar":
+        # 2024 Spring Festival: exchange closure Feb 9-17 (resume Feb 19),
+        # verified online against the exchange announcement on 2026-10-25.
         holidays = {
             date(2024, 1, 1),
             date(2024, 2, 9),
+            date(2024, 2, 12),
+            date(2024, 2, 13),
+            date(2024, 2, 14),
             date(2024, 2, 15),
             date(2024, 2, 16),
             date(2024, 4, 4),
@@ -136,6 +141,7 @@ class StaticTradingCalendar:
             date(2025, 10, 3),
             date(2025, 10, 6),
             date(2025, 10, 7),
+            date(2025, 10, 8),
         }
         return cls._for_year(2025, holidays)
 
