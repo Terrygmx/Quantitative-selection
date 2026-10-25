@@ -18,6 +18,25 @@ python3 -m ruff check src/quant_agent tests
 
 CI 使用相同流程，并额外编译遗留入口 `src/tail_momentum_selector.py` 和 `src/quant_agent` 全部源码。
 
+## 外部交易日历（2027 及以后）
+
+内置静态日历只覆盖 2023–2026。之后的年份（以及对已发布年份的勘误）以数据文件供给，格式为每行一个 ISO 日期，空行与 `#` 注释行允许；空数据集、非法行、不可读文件都会 fail closed 抛 `ValueError`：
+
+```text
+# configs/calendars/sse-2027.txt
+2027-01-04
+2027-01-05
+```
+
+```python
+from quant_agent.adapters.calendar import FileCalendarSource
+
+calendar = FileCalendarSource("configs/calendars/sse-2027.txt").extend_builtin()
+rules = TradingRulesPlugin(calendar)
+```
+
+`load()` 只用文件数据构建日历；`extend_builtin()` 把文件合并进内置 2023–2026 数据。未提供数据文件的年份保持「非交易日」而不是猜测节假日。
+
 ## 模拟盘命令
 
 模拟盘只接受已保存审批的策略配置。审批文件默认位于 `state/paper-approvals.json`，记录策略 ID、配置哈希和批准人；配置内容本身必须包含相同的 `config_hash`。
