@@ -1,6 +1,6 @@
 # 工作交接（Handover）
 
-更新时间：2026-10-25。当前 HEAD：`786f4a1`，工作树干净，分支 `main`。
+更新时间：2026-10-25（第二轮）。当前 HEAD 见 `git log`，工作树干净，分支 `main`。
 
 ## 工作循环约定（必须遵守）
 
@@ -21,34 +21,29 @@ python3 -m ruff check src/quant_agent tests
 python3 -m mypy src/quant_agent   # CI 不跑；要求不引入新错误
 ```
 
-当前基线：245 个测试全绿，覆盖率 94%，Ruff 全绿。Mypy 遗留错误约 41 个（7 个文件，多为 `Mapping[str, object]` 的未收窄访问与 `backtest.py` 金样引擎的旧代码），为历史存量，CI 不阻断；本轮所有切片经前后 diff 证明零新增 mypy 错误。新增代码不允许引入新的 mypy 错误。
+当前基线：276 个测试全绿，覆盖率 94%，Ruff 全绿。Mypy 遗留错误 35 个（本轮从 41 个降到 35 个：`rules/trading.py` 的 6 个 `PriceBand | None` union-attr 债务已随 None 守卫清零）；CI 不阻断，新增代码不允许引入新的 mypy 错误。
 
-## 最近完成的工作（本次会话：TODO 清零循环）
+## 最近完成的工作（本次会话：M2/M3 剩余项循环）
 
-按「实现 → review → 修复」循环完成原剩余 4 项 TODO：
+按「实现 → review → 修复」循环完成 M2、M3 剩余项：
 
-- `b1f709e` M7 共享成交内核：新增 `src/quant_agent/application/execution.py`（`ExecutionCore`/`ExecutionCosts`/`ExecutionOutcome`），`SimulatedPaperExecution` 与 `MultiInstrumentBacktestEngine` 全部订单经同一通道。Red 是 4 个跨引擎等价测试，暴露并修复三处回测特权：滑点价不按 tick 取整、现金按滑点前价格检查（现金可为负）、现金检查遮蔽规则拒绝。
-- `a6e6268` 上一项 review 修复：基准回归 12.4%（94.1s vs 同机基线提交 83.7s），热点为买单的 Portfolio/Position 无谓分配与 `BacktestConfig.costs` 每单重建；买入共享空持仓视图 + 缓存 costs 后回到 84.0s。RUNBOOK 基线更新（同日漂移 67–84s 已注明）。
-- `a8256ba` + `0bf11b8` M2 交易日历外部数据源：`rules/calendar.parse_trading_days`（每行一个 ISO 日期，空/非法 fail closed）+ `StaticTradingCalendar.union` + `adapters/calendar.FileCalendarSource`（`load()`/`extend_builtin()`）。2027+ 节假日未发布，不猜测，以数据文件供给；RUNBOOK 补格式说明。
-- `27174aa` M5 金样 `excluded_count=1`：当日抓取失败标的原始响应未保存（离线不可补录），固定夹具以合成标的（分时为空 → `NO_MINUTE_DATA`）建模，金样锁定测试改为与 `results/signals_2026-09-15.json` 逐字段相等；来源在 `tests/fixtures/README.md` 披露。
-- `8a28efb` M2 盘后定价交易：科创板/创业板 15:05–15:30 时段可交易（`tradeability`），规则强制申报价等于当日收盘价（`INVALID_AFTER_HOURS_PRICE`）。
-- `786f4a1` 上一项 review 修复：执行器仍按滑点定价导致盘后单全被拒；规则公开 `is_after_hours_fixed_price_session`，`ExecutionCore.order_price` 成为两引擎唯一定价入口（盘后=收盘价无滑点，盘中=滑点价）。
+- `9f1f1d8` M2 盘中提前申报盘后定价单：`Order.session`（`continuous` 默认 / `after_hours_fixed` 校验，dict 往返保留）；规则层对标记订单执行申报窗口门（9:30–11:30、13:00–15:30 之外 `OUTSIDE_AFTER_HOURS_SUBMISSION_WINDOW`，非科创/创业板 `AFTER_HOURS_BOARD_NOT_SUPPORTED`）；`ExecutionCore.order_price` 对标记订单恒按 tick 收盘价定价。未标记订单行为不变。
+- `6aba52e` M2 涨跌停方向语义（review 中由 mypy 净增错误追出）：涨停时仅买入排队拒绝（`LIMIT_UP`）、卖出可成交；跌停反之；带外价格两方向统一 `PRICE_BAND`。附带修复新股前五日 band=None 时 `validate_order` 的 AttributeError 崩溃（此前无测试路径），并因此清零 `rules/trading.py` 全部 6 个 mypy 遗留错误。
+- `01e1f9a` M2 规则官方引用登记：`rules/references.py` 的 `RULE_REFERENCES` 覆盖全部已实现规则领域，测试锁定完整性；所有引用 `verified_online=False` 且必须附注（离线未核对原文，诚实披露），文档 `docs/RULES_REFERENCES.md`。
+- `1c2db94` M3 数据适配器：`CsvMarketDataPort`（标准库）与 `ParquetMarketDataPort`（可选 `pyarrow` 惰性导入）委托 `InMemoryMarketDataPort` 复用 PIT 语义，接入 `tests/contract/test_market_data_port.py` 参数化（in-memory/csv/parquet 三套同契约）；文件解析按行号 fail closed（缺文件/缺列/坏数值/无时区时间戳）。
 
 ## 剩余 TODO（建议顺序）
 
-`docs/TODO.md` 原有 4 项已全部闭环。当前记录在案的新缺口：
-
-1. **盘中提前提交盘后定价单**（M2 备注）：真实市场允许盘中申报、盘后以收盘价撮合；当前模型只支持盘后时段内直接下单。
-2. **收盘价恰为涨跌停价时的盘后申报**（M2 备注）：当前保守拒绝，真实市场允许排队。
-3. **真实交易所规则引用适配**（M2 未闭环项）：为涨跌幅、时段、盘后规则补充官方文件引用与逐年核对。
-4. **数据层适配器**（M3 未闭环项）：CSV/Parquet/DuckDB 适配器按 `tests/contract/test_market_data_port.py` 契约参数化接入。
-5. **实盘接口**：按 PRD 仍为非目标；需模拟盘稳定运行与人工审批流程验收后另立评审。
+1. **DuckDB 适配器**（M3）：依赖离线不可安装；依赖可用后按同一契约参数化接入即可（参考 csv/parquet 工厂写法）。
+2. **规则引用在线核对**（M2）：联网后逐条打开 `RULE_REFERENCES` 来源核对条文与文号，确认后置 `verified_online=True`；2023–2026 节假日静态数据逐年核对。
+3. **引擎侧盘后延迟撮合队列**（M7 备注）：规则与定价已支持 `after_hours_fixed` 标记订单，模拟执行器尚无「盘中提交、盘后撮合」的队列。
+4. **实盘接口**：按 PRD 仍为非目标；需模拟盘稳定运行与人工审批流程验收后另立评审。
 
 ## 关键文件与约束
 
-- 领域层（`src/quant_agent/domain/`）必须零 IO。规则层（`src/quant_agent/rules/`）是涨跌停、T+1、整手、时段（含盘后定价）的唯一裁决者；模拟盘和回测都不允许绕过它。
-- 成交、费用、滑点、tick 取整、现金与 T+1 账本只在 `application/execution.py` 的 `ExecutionCore` 中存在一份；两引擎定价都必须走 `ExecutionCore.order_price`。冻结的单票金样引擎 `BacktestEngine`（`application/backtest.py` 内）保留自有费用计算作为回归夹具，勿迁移。
+- 领域层（`src/quant_agent/domain/`）必须零 IO。规则层（`src/quant_agent/rules/`）是涨跌停（含方向语义）、T+1、整手、时段（连续竞价与盘后定价申报/撮合窗口）的唯一裁决者；模拟盘和回测都不允许绕过它。
+- 成交、费用、滑点、tick 取整、现金与 T+1 账本只在 `application/execution.py` 的 `ExecutionCore` 中存在一份；两引擎定价必须走 `ExecutionCore.order_price`（含 `session` 参数）。冻结的单票金样引擎 `BacktestEngine` 保留自有费用计算作为回归夹具，勿迁移。
 - 测试可导入遗留 `src/tail_momentum_selector.py` 做夹具解析/等价对照，但不修改它。
 - `SimulatedPaperExecution` 的市场快照解析约定：非法数值 → `INVALID_PRICE` 拒绝；`previous_close` 缺失/非法 → 回退为 `last`；`universe` 必填（缺失 ValueError，退出码 2）；snapshot 中 `universe` 之外的标的只是参考数据，绝不下单。
 - 配置的 `execution` 段结构见 `docs/RUNBOOK.md`；审批账本 `state/paper-approvals.json` 与 `config_hash` 绑定，任何人不得绕过。
-- 外部交易日历数据文件格式与加载方式见 `docs/RUNBOOK.md`「外部交易日历」一节。
+- 外部交易日历数据文件格式见 `docs/RUNBOOK.md`「外部交易日历」；数据适配器契约与列要求见「数据适配器」一节。
