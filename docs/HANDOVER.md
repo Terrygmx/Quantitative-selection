@@ -21,7 +21,7 @@ python3 -m ruff check src/quant_agent tests
 python3 -m mypy src/quant_agent
 ```
 
-当前基线（main）：371 个测试（370 通过；1 个 westock 真实缓存等价测试在无 cache/ 的环境跳过），覆盖率 92%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**；性能基准 82.3s（带宽 67–84s 内）。注：westock 真实缓存等价测试在无 cache/ 的环境跳过；此前个别提交信息中的测试计数与反引号文本有误，以本条与 git diff 为准。
+当前基线（feat/followup-integration 分支）：379 个测试（378 通过；1 个 westock 真实缓存等价测试在无 cache/ 的环境跳过），覆盖率 93%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**；日频性能基准 82.3s（带宽 67–84s 内）。注：westock 真实缓存等价测试在无 cache/ 的环境跳过；此前个别提交信息中的测试计数与反引号文本有误，以本条与 git diff 为准。
 
 ## 最近完成的工作（本次会话：M7 队列 + M8 类型债务）
 
@@ -72,14 +72,19 @@ CLI 为本机 Go 二进制 `~/.local/bin/westock`（PATH 可见，无需 `WESTOC
 - `737b5e6` `industry_rotation`：行业动量排名取 top_n、仅正动量发信号（弱市空仓）；schema 校验器补 minProperties/additionalProperties(object)。
 - `b3273ed` 四环境配置（paper 唯一非 dry-run 且强制审批；prod 恒 dry-run，§9；无密钥有测试锁定）+ Dockerfile + docker-compose（paper 服务 dry-run 命令 + 审批卷；Docker 守护进程未运行，构建契约以静态校验+YAML 验证覆盖）。
 
-## 剩余 TODO（已无里程碑级未完成项）
+## 最近完成（第七轮：后续项循环，feat/followup-integration 分支）
 
-1. 网关→工具箱集成层（网关审计与 RoleToolbox 直接串联）。
-2. Curated/Feature Store 持久化对接（写入路径接 CuratedStore）。
-3. 深交所 docx 逐行解析（沪深对齐已由证监会官方发布确认）。
-4. 分钟引擎长历史查询的按日增量游标优化（性能基准只覆盖日频）。
-5. Docker 实机构建验证（本机守护进程未运行，静态契约已锁定）。
-6. 实盘接口：PRD 非目标；模拟盘稳定运行 + 人工审批验收后另立评审。
+- `e1f7ec7` 网关→工具箱集成：`AgentGateway(tool_executors=...)`，允许的角色工具真实执行（ISO/datetime 双形态参数），执行异常转审计型 `TOOL_FAILED` 拒绝不泄漏堆栈；审计序列化支持 datetime。review 修正两处测试角色前提（explain_signal/draft_experiment 属研究角色）。
+- `916cd0a` `PersistentFeatureStore`：值落 Parquet + 定义哈希 JSON 侧车，load 后定义锁语义跨进程保持。
+- `c8ffe58` 分钟引擎 `prefetched()` 工厂：每标的一次性按日分桶 + 日游标推进，消除 O(天数×标的×全历史) 重复查询，等价测试锁定结果一致；默认查询路径不变。
+- `3816af8` 深交所 2026 规则全文 PDF 逐条核对（3.1.4/2.3.2/3.3.8/3.3.11/3.3.13/3.3.14/3.6.1–3.6.5）：涨跌幅/T+1/整手/时段与实现一致；**发现并修复**盘后申报窗口深市 9:15 起（`after_hours_submission_gate` 按交易所区分）。
+- Docker 实机构建验证：镜像构建、五 CLI 导入、`strategy list` 五插件、无审批 fail closed（退出码 2）、`approve`→`run --dry-run` 全流程（退出码 0）全部通过。
+
+## 剩余 TODO
+
+1. 实盘接口：PRD 非目标；模拟盘稳定运行 + 人工审批验收后另立评审。
+2. 深交所静态日历与上交所共用数据的独立逐年复核（历年公告一致，未逐份核对深交所原文）。
+3. 性能基准仅覆盖日频引擎；分钟频规模化基准待真实分钟数据规模需求。
 
 ## 关键文件与约束
 

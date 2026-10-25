@@ -56,9 +56,9 @@
 - [x] Agent 角色工具执行体：`RoleToolbox`（读 PIT 数据、写草稿、追加质量事件、解释信号/拒绝，全部注入式只读边界 + 免责声明）。
 - [x] §6 策略序列全部五个插件：tail_momentum_overnight、trend_breakout、mean_reversion_liquid、low_vol_quality、industry_rotation。
 - [x] 四环境配置（prod 恒 dry-run，无密钥有测试锁定）+ Dockerfile + docker-compose（paper 服务，dry-run 命令，审批卷）。
-- [ ] 网关→工具箱集成层（网关审计与工具执行体的直接串联）。
-- [ ] Curated/Feature Store 持久化对接（写入路径接 CuratedStore）。
-- [ ] 深交所 docx 逐行解析（对齐已由证监会发布确认）。
+- [x] 网关→工具箱集成层：`tool_executors` 注入，允许的角色工具真实执行、异常转 `TOOL_FAILED` 审计拒绝，datetime/ISO 参数双形态。
+- [x] Curated/Feature Store 持久化对接：`PersistentFeatureStore`（值落 Parquet、定义哈希落 JSON 侧车，load 后定义锁语义保持）。
+- [x] 深交所 2026 规则原文逐条核对（发现并修复盘后申报窗口 SZSE 9:15 起）。
 - [ ] 实盘接口：PRD 非目标，另立评审。
 
 ## M8 质量闸门

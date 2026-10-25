@@ -142,6 +142,8 @@ PYTHONPATH=src python3 -m quant_agent.cli.paper \
 
 单机部署：`docker build -t quant-selection:paper . && docker compose up paper`（compose 默认执行 dry-run 命令；审批账本挂载于 `paper-state` 卷）。镜像内入口 fail closed：无审批账本则退出码 2。
 
+实机构建已验证（2026-10-25，python:3.11-slim）：镜像构建成功；容器内五个 CLI 模块全部可导入；`strategy list` 输出五个插件；无审批运行 fail closed（退出码 2）；`approve` → `run --dry-run` 全流程闭环（DRY_RUN 空订单，退出码 0）。
+
 ## 性能基准
 
 基准用合成数据验证 3000 只股票 × 5 年（1260 个样本日）的多标的回测事件时钟：
