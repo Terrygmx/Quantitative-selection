@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable, Protocol
 
 
 @dataclass(frozen=True, slots=True)
@@ -9,6 +9,15 @@ class StrategyMetadata:
     strategy_id: str
     version: str
     frequency: str
+
+
+class Strategy(Protocol):
+    """Minimal structural contract the registry relies on (DETAILED_DESIGN
+    §4 keeps discovery explicit rather than entry-point based)."""
+
+    metadata: StrategyMetadata
+
+    def on_snapshot(self, context: Any) -> list[object]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,9 +35,9 @@ class PluginRunResult:
 
 class StrategyRegistry:
     def __init__(self):
-        self._strategies: dict[str, object] = {}
+        self._strategies: dict[str, Strategy] = {}
 
-    def register(self, strategy) -> None:
+    def register(self, strategy: Strategy) -> None:
         metadata = getattr(strategy, "metadata", None)
         if metadata is None or not getattr(metadata, "strategy_id", ""):
             raise ValueError("strategy metadata with strategy_id is required")
@@ -36,7 +45,7 @@ class StrategyRegistry:
             raise ValueError(f"duplicate strategy id: {metadata.strategy_id}")
         self._strategies[metadata.strategy_id] = strategy
 
-    def get(self, strategy_id: str):
+    def get(self, strategy_id: str) -> Strategy:
         try:
             return self._strategies[strategy_id]
         except KeyError:

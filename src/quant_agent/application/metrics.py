@@ -51,7 +51,14 @@ class BacktestMetrics:
             fill = self.fills[index]
             if previous_fill["side"] == "buy" and fill["side"] == "sell":
                 considered += 1
-                if fill["price"] > previous_fill["price"]:
+                sell_price = fill["price"]
+                buy_price = previous_fill["price"]
+                if not (
+                    isinstance(sell_price, (int, float, Decimal))
+                    and isinstance(buy_price, (int, float, Decimal))
+                ):
+                    raise ValueError("fill prices must be numeric to compute win rate")
+                if sell_price > buy_price:
                     profitable += 1
         win_rate = profitable / considered if considered else 0.0
 

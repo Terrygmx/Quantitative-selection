@@ -18,9 +18,10 @@ python3 -m pip install -r requirements.txt -r requirements-dev.txt
 python3 -m coverage run -m pytest --ignore=tests/performance
 python3 -m coverage report --fail-under=90
 python3 -m ruff check src/quant_agent tests
+python3 -m mypy src/quant_agent
 ```
 
-CI 使用相同流程，并额外编译遗留入口 `src/tail_momentum_selector.py` 和 `src/quant_agent` 全部源码。
+CI 使用相同流程（含 mypy 阻断），并额外编译遗留入口 `src/tail_momentum_selector.py` 和 `src/quant_agent` 全部源码。
 
 ## 外部交易日历（2027 及以后）
 

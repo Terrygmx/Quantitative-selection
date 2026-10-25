@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
-TYPE_NAMES = {
+TYPE_NAMES: Mapping[str, type | tuple[type, ...]] = {
     "object": dict,
     "array": list,
     "string": str,
@@ -32,8 +32,10 @@ def validate_config(config: Mapping[str, Any], schema: Mapping[str, Any]) -> Non
 
 def validate_value(field: str, value: Any, schema: Mapping[str, Any]) -> None:
     expected = schema.get("type")
-    python_type = TYPE_NAMES.get(expected)
-    if python_type and not isinstance(value, python_type):
+    python_type: type | tuple[type, ...] | None = None
+    if isinstance(expected, str):
+        python_type = TYPE_NAMES.get(expected)
+    if python_type is not None and not isinstance(value, python_type):
         raise ValueError(f"{field} must be {expected}")
     if expected == "integer" and isinstance(value, bool):
         raise ValueError(f"{field} must be integer")

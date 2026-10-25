@@ -90,7 +90,7 @@ def json_audit_sink(path: str):
     return append
 
 
-def memory_audit_sink(events: list[AuditEvent]) -> None:
+def memory_audit_sink(events: list[AuditEvent]):
     def append(event: AuditEvent) -> None:
         events.append(event)
 

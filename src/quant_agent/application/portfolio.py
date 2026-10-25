@@ -97,9 +97,10 @@ class SignalComposer:
         industries: dict[str, str] = {}
         for signal in signals:
             symbol = str(signal["symbol"])
-            by_symbol.setdefault(symbol, {})[str(signal["strategy_id"])] = float(
-                signal["target_weight"]
-            )
+            weight = signal["target_weight"]
+            if not isinstance(weight, (int, float, str)):
+                raise ValueError(f"{symbol} target_weight must be numeric")
+            by_symbol.setdefault(symbol, {})[str(signal["strategy_id"])] = float(weight)
             industries[symbol] = str(signal["industry"])
 
         targets: list[TargetPosition] = []

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from quant_agent.domain.models import Instrument, Order
 from quant_agent.application.execution import (
@@ -97,7 +97,7 @@ class Position:
 class BacktestEngine:
     def __init__(
         self,
-        bars: Mapping[str, object],
+        bars: Sequence[Mapping[str, object]],
         config: BacktestConfig,
         instrument: Instrument | None = None,
         rules: TradingRulesPlugin | None = None,
@@ -118,7 +118,7 @@ class BacktestEngine:
         self._order_id = 0
 
     def execution_details(self) -> dict[str, list[dict[str, object]]]:
-        orders = [
+        orders: list[dict[str, object]] = [
             {
                 "id": order.id,
                 "side": order.side,
@@ -145,13 +145,21 @@ class BacktestEngine:
         ]
         return {"orders": orders, "fills": fills}
 
+    @staticmethod
+    def _bar_date(bar: Mapping[str, object], label: str) -> date:
+        value = bar.get("date")
+        if not isinstance(value, date):
+            raise ValueError(f"{label} bar requires a date field")
+        return value
+
     def run(self) -> list[Event]:
         events: list[Event] = []
         signal_bar = self.bars[0]
+        signal_day = self._bar_date(signal_bar, "signal")
         signal_time = datetime(
-            signal_bar["date"].year,
-            signal_bar["date"].month,
-            signal_bar["date"].day,
+            signal_day.year,
+            signal_day.month,
+            signal_day.day,
             14,
             31,
             tzinfo=CN_MARKET_TZ,
@@ -159,16 +167,23 @@ class BacktestEngine:
         events.append(Event("SIGNAL", signal_time))
 
         buy_bar = self.bars[1]
+        buy_day = self._bar_date(buy_bar, "buy")
         buy_time = datetime(
-            buy_bar["date"].year,
-            buy_bar["date"].month,
-            buy_bar["date"].day,
+            buy_day.year,
+            buy_day.month,
+            buy_day.day,
             9,
             31,
             tzinfo=CN_MARKET_TZ,
         )
         order = self._create_order("buy", buy_bar, buy_time)
-        events.append(Event("ORDER", buy_time, order=order))
+        events.append(
+            Event(
+                "ORDER",
+                buy_time,
+                order=OrderRecord(order.side, order.quantity, order.created_at),
+            )
+        )
         self.order_states.submit(PendingOrder(order.id, order.created_at))
         rejections = self._validate_order(order, buy_bar)
         if rejections:
@@ -188,16 +203,25 @@ class BacktestEngine:
         )
 
         sell_bar = self.bars[1]
+        sell_day = self._bar_date(sell_bar, "sell")
         sell_time = datetime(
-            sell_bar["date"].year,
-            sell_bar["date"].month,
-            sell_bar["date"].day,
+            sell_day.year,
+            sell_day.month,
+            sell_day.day,
             9,
             31,
             tzinfo=CN_MARKET_TZ,
         )
         sell_order = self._create_order("sell", sell_bar, sell_time)
-        events.append(Event("ORDER", sell_time, order=sell_order))
+        events.append(
+            Event(
+                "ORDER",
+                sell_time,
+                order=OrderRecord(
+                    sell_order.side, sell_order.quantity, sell_order.created_at
+                ),
+            )
+        )
         self.order_states.submit(PendingOrder(sell_order.id, sell_order.created_at))
         sell_rejections = self._validate_order(sell_order, sell_bar)
         if sell_rejections:
@@ -364,12 +388,12 @@ class MultiInstrumentBacktestEngine:
         return events
 
     def _ordered_dates(self) -> list[date]:
-        dates = {
-            item["date"]
-            for items in self.bars.values()
-            for item in items
-            if isinstance(item.get("date"), date)
-        }
+        dates: set[date] = set()
+        for items in self.bars.values():
+            for item in items:
+                day = item.get("date")
+                if isinstance(day, date):
+                    dates.add(day)
         return sorted(dates)
 
     def sell_settled(self, timestamp: datetime) -> list[MultiInstrumentEvent]:
@@ -418,5 +442,9 @@ class MultiInstrumentBacktestEngine:
         return events
 
     def _latest_bar_on_or_before(self, symbol: str, day: date) -> Mapping[str, object] | None:
-        eligible = [item for item in self.bars[symbol] if item["date"] <= day]
+        eligible: list[Mapping[str, object]] = []
+        for item in self.bars[symbol]:
+            bar_day = item["date"]
+            if isinstance(bar_day, date) and bar_day <= day:
+                eligible.append(item)
         return eligible[-1] if eligible else None
