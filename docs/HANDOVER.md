@@ -21,7 +21,7 @@ python3 -m ruff check src/quant_agent tests
 python3 -m mypy src/quant_agent
 ```
 
-当前基线：281 个测试（280 通过；1 个 westock 真实缓存等价测试在无 cache/ 的环境跳过），覆盖率 93%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**（DuckDB 在契约套件实跑，westock 已真实联调）。注：此前部分提交信息中的测试计数（293/302）为推算错误，以本条为准。
+当前基线：307 个测试（306 通过；1 个 westock 真实缓存等价测试在无 cache/ 的环境跳过），覆盖率 93%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**；性能基准 70.6s（带宽 67–84s 内）。注：westock 真实缓存等价测试在无 cache/ 的环境跳过；此前个别提交信息中的测试计数与反引号文本有误，以本条与 git diff 为准。
 
 ## 最近完成的工作（本次会话：M7 队列 + M8 类型债务）
 
@@ -40,11 +40,22 @@ python3 -m mypy src/quant_agent
 
 CLI 为本机 Go 二进制 `~/.local/bin/westock`（PATH 可见，无需 `WESTOCK_CLI`）。`adapters/westock.py`：解析与 legacy 在固定夹具及真实缓存 `k_sh600176.md` 上逐字段等价（运行时不 import legacy）；`WestockMarketDataAdapter` 走 PIT 契约（抓取时刻门 + 日线收盘 bar 收盘后可见 + block 质量事件）；`CachedKlineSource` 离线读 `k_{symbol}.md`，`WestockCliKlineSource` 在线组 legacy 命令行（字节读+显式 UTF-8）。已用真实二进制联调（60 根日线，PIT 门完整）。用法见 RUNBOOK「westock 适配器」。
 
+## 最近完成（第四轮：剩余待办循环）
+
+- `67b49c4` 日历逐年复核：2023 全对；2024 补 2/12–2/14（春节休市 2/9–2/17）、2025 补 10/8（国庆中秋休至 10/8），均对照交易所公告。
+- `72bf64c` 深交所对齐经证监会官方发布确认（创业板 20% 维持、盘后定价扩全市场；深交所 docx 未逐行解析，已如实注明）。
+- `0cfb5ea`+`704fb4a`+`61e9743` FR-6 CLI：`quant_agent.cli.strategy list`（显式注册表）与 `quant_agent.cli.backtest run`（CSV 日线→共享内核→orders/fills/summary JSON；退出码约定与 paper CLI 一致）；review 补 mypy 方差修复与 RUNBOOK。
+- `989297c` 可替换成交模型（§7）：`fill_model = slippage（默认）/ next_open / vwap`，配置贯穿两引擎与回测 CLI，vwap 缺 amount/volume fail closed，新增跨引擎等价锁定。
+- `a34d1bc` trend_breakout 日频策略插件（§6 #2）：唐奇安收盘突破 + 突破前 MA 上行过滤（同窗 MA 对收盘突破数学上恒上行，故过滤在突破前历史 上判定——TDD 逼出的设计修正），schema/README/注册齐备。
+
 ## 剩余 TODO
 
-1. **2023–2025 节假日逐年复核** + **深交所规则原文逐条取文**（2026 与上交所侧已核对）。
-2. **实盘接口**：PRD 非目标；需模拟盘稳定运行与人工审批流程验收后另立评审。
-3. **第二阶段功能块**（未列入 TODO 清单的设计规划项）：后续策略插件（trend_breakout 等 3 个）、可替换成交模型、CLI 其余命令、分钟频回测/滚动窗口/基准比较、Curated 分层存储与 Feature Store、四个 Agent 角色工具集、四环境配置与部署。
+1. **策略序列 #3/#4**：`mean_reversion_liquid`、`low_vol_quality`/`industry_rotation`（照 trend_breakout 模式：目录+schema+README+测试+注册）。
+2. **回测能力**：分钟频、滚动窗口、样本内/外划分、基准比较（FR-3.1）；CLI `report show`、`agent review`（FR-6）。
+3. **数据分层**：Curated Parquet 分区 + DuckDB 元数据、Feature Store（参数哈希与版本）、Raw Store 按来源存档。
+4. **Agent 工具集**：研究/数据质量/风险审阅/开发四个角色的有界工具（Gateway 与审计已就绪）。
+5. **部署**：dev/research/paper/prod 四环境配置、Docker Compose。
+6. **实盘接口**：PRD 非目标；另立评审。
 
 ## 关键文件与约束
 
