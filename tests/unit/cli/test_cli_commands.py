@@ -193,3 +193,56 @@ def test_backtest_run_rejects_a_split_before_the_start(backtest_inputs, capsys):
 
     assert exit_code == 2
     assert capsys.readouterr().err.startswith("error:")
+
+
+def test_backtest_run_compares_against_a_benchmark(backtest_inputs, capsys):
+    bars, instruments, config = backtest_inputs
+
+    exit_code = backtest_main(
+        ["run", "--bars", str(bars), "--instruments", str(instruments),
+         "--config", str(config), "--benchmark", "sh600519"]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert report["benchmark"]["symbol"] == "sh600519"
+    assert report["benchmark"]["return"] == pytest.approx(0.02)  # 10.0 -> 10.2
+    assert report["summary"]["excess_return"] == pytest.approx(
+        report["summary"]["total_return"] - 0.02
+    )
+
+
+def test_backtest_run_rejects_unknown_benchmark(backtest_inputs, capsys):
+    bars, instruments, config = backtest_inputs
+
+    exit_code = backtest_main(
+        ["run", "--bars", str(bars), "--instruments", str(instruments),
+         "--config", str(config), "--benchmark", "sh999999"]
+    )
+
+    assert exit_code == 2
+
+
+def test_backtest_run_rolling_windows(backtest_inputs, capsys):
+    bars, instruments, config = backtest_inputs
+
+    exit_code = backtest_main(
+        ["run", "--bars", str(bars), "--instruments", str(instruments),
+         "--config", str(config), "--window", "1"]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert len(report["windows"]) == 2
+    assert [w["summary"]["fill_count"] for w in report["windows"]] == [2, 2]
+
+
+def test_backtest_run_window_and_split_are_exclusive(backtest_inputs, capsys):
+    bars, instruments, config = backtest_inputs
+
+    exit_code = backtest_main(
+        ["run", "--bars", str(bars), "--instruments", str(instruments),
+         "--config", str(config), "--window", "1", "--split", "2026-09-15"]
+    )
+
+    assert exit_code == 2

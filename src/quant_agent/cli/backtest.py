@@ -82,6 +82,9 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
     start = _iso_date(args.start, "--start") if args.start else None
     end = _iso_date(args.end, "--end") if args.end else None
     split = _iso_date(args.split, "--split") if args.split else None
+    window = int(args.window) if args.window else 0
+    if split is not None and window:
+        raise ValueError("--split and --window are mutually exclusive")
     if split is not None:
         if start is not None and split <= start:
             raise ValueError("--split must fall after --start")
@@ -91,6 +94,23 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
             "in_sample": _run_once(args, start=start, end=_day_before(split)),
             "out_of_sample": _run_once(args, start=split, end=end),
         }
+    if window:
+        if window < 1:
+            raise ValueError("--window must be a positive number of days")
+        port = CsvMarketDataPort(args.bars)
+        symbols = sorted(_instrument_symbols(args))
+        trading_days: set[date] = set()
+        for entries in _bars_for_engine(port, symbols).values():
+            for entry in entries:
+                day = entry["date"]
+                if isinstance(day, date):
+                    trading_days.add(day)
+        dates = sorted(trading_days)
+        windows = []
+        for index in range(0, len(dates), window):
+            chunk = dates[index : index + window]
+            windows.append(_run_once(args, start=chunk[0], end=chunk[-1]))
+        return {"windows": windows}
     return _run_once(args, start=start, end=end)
 
 
@@ -98,6 +118,30 @@ def _day_before(day: date) -> date:
     from datetime import timedelta
 
     return day - timedelta(days=1)
+
+
+def _instrument_symbols(args: argparse.Namespace) -> list[str]:
+    instruments_data = _load_json(args.instruments)
+    if not isinstance(instruments_data, list) or not instruments_data:
+        raise ValueError("instruments must be a non-empty JSON array")
+    symbols = []
+    for item in instruments_data:
+        if not isinstance(item, Mapping):
+            raise ValueError("instrument entries must be objects")
+        symbols.append(str(item["symbol"]))
+    return symbols
+
+
+def _benchmark_report(
+    engine: MultiInstrumentBacktestEngine, symbol: str
+) -> dict[str, float | str]:
+    entries = engine.bars.get(symbol)
+    if not entries:
+        raise ValueError(f"benchmark symbol {symbol} has no bars in range")
+    first = Decimal(str(entries[0]["close"]))
+    last = Decimal(str(entries[-1]["close"]))
+    benchmark_return = float(last / first - 1)
+    return {"symbol": symbol, "return": benchmark_return}
 
 
 def _run_once(
@@ -190,7 +234,20 @@ def _run_once(
         equity_curve=(engine.config.initial_cash, final_equity),
         fills=fills,
     )
-    return {"orders": orders, "fills": fills, "summary": metrics.summary()}
+    report: dict[str, object] = {
+        "orders": orders,
+        "fills": fills,
+        "summary": metrics.summary(),
+    }
+    if args.benchmark:
+        benchmark = _benchmark_report(engine, str(args.benchmark))
+        report["benchmark"] = benchmark
+        summary: dict[str, float | int] = dict(metrics.summary())
+        summary["excess_return"] = summary["total_return"] - float(
+            benchmark["return"]
+        )
+        report["summary"] = summary
+    return report
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -214,6 +271,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--split",
         default="",
         help="ISO date splitting in-sample (< split) from out-of-sample (>= split)",
+    )
+    run.add_argument(
+        "--window",
+        type=int,
+        default=0,
+        help="run consecutive rolling windows of this many trading days",
+    )
+    run.add_argument(
+        "--benchmark",
+        default="",
+        help="symbol from the bar file to compare buy-and-hold returns against",
     )
     return parser
 
