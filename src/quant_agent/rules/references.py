@@ -1,7 +1,7 @@
 """Registry mapping each implemented A-share rule area to its official
-source document. Every citation here was recorded offline: `verified_online`
-is False until someone opens the source and checks it (see M2 TODO), so the
-platform never claims a verification that did not happen."""
+source document. Entries verified against the source on 2026-10-25 carry
+`verified_online=True` plus the clause evidence in their note; anything not
+yet checked against an original source stays False and must explain why."""
 
 from __future__ import annotations
 
@@ -21,9 +21,9 @@ class RuleReference:
 
 
 _SSE_TRADING_RULES_2026 = "https://www.sse.com.cn/lawandrules/sselawsrules2025/trade/universal/c/c_20260424_10816492.shtml"
-_SZSE_CHINEXT_PROVISIONS = "https://www.szse.cn/lawrules/rule/repeal/rules/P020231230545310237980.pdf"
+_SSE_CLOSURE_PAGE = "https://www.sse.com.cn/disclosure/dealinstruc/closed"
 
-_UNVERIFIED = "离线环境记录，未在线核对原文；引用与条文需在线验证后置 verified_online=True"
+_VERIFIED = "2026-10-25 在线核对原文"
 
 
 RULE_REFERENCES: dict[str, RuleReference] = {
@@ -31,63 +31,86 @@ RULE_REFERENCES: dict[str, RuleReference] = {
     for ref in (
         RuleReference(
             area="price_limits_main_board",
-            rule="主板股票涨跌幅限制 ±10%",
-            source_title="上海证券交易所交易规则（2026年修订）/ 深圳证券交易所交易规则",
+            rule="主板股票涨跌幅限制 ±10%（涨跌幅限制价格=前收盘价×(1±比例)）",
+            source_title="上海证券交易所交易规则（2026年修订）3.3.13",
             issuer="SSE/SZSE",
+            document_number="上证发〔2026〕41号，2026-07-06 施行",
             url=_SSE_TRADING_RULES_2026,
-            note=_UNVERIFIED + "；URL 摘自 PRODUCT_REQUIREMENTS.md",
+            verified_online=True,
+            note=_VERIFIED + "：3.3.13 原文“涨跌幅限制比例为10%”及计算公式；深交所对应条文未逐字取原文",
         ),
         RuleReference(
             area="price_limits_star_chinext",
-            rule="科创板、创业板股票涨跌幅限制 ±20%（创业板自 2020-08-24 起）",
-            source_title="上海证券交易所交易规则（科创板章节）/ 深圳证券交易所创业板交易特别规定",
+            rule="科创板 ±20%（交易规则 6.6）；创业板 ±20% 自 2020-08-24 注册制改革起",
+            source_title="上海证券交易所交易规则（2026年修订）6.6 / 深交所创业板注册制改革配套规则",
             issuer="SSE/SZSE",
-            url=_SZSE_CHINEXT_PROVISIONS,
-            note=_UNVERIFIED + "；URL 摘自 PRODUCT_REQUIREMENTS.md",
+            document_number="上证发〔2026〕41号",
+            url=_SSE_TRADING_RULES_2026,
+            verified_online=True,
+            note=_VERIFIED + "：科创板 20% 见 6.6 原文；创业板 2020-08-24 首批注册制上市起 20% 经人民网 2020-08-24 报道核实，深交所原文待取",
         ),
         RuleReference(
             area="price_limits_new_listing",
-            rule="科创板/创业板新股上市前 5 个交易日不设涨跌幅",
-            source_title="上海证券交易所交易规则（科创板章节）/ 深圳证券交易所创业板交易特别规定",
+            rule="IPO 股票上市后前 5 个交易日不设涨跌幅（主板自 2023-02-17 全面注册制起适用）",
+            source_title="上海证券交易所交易规则（2026年修订）3.3.13 豁免清单(一) / 全面注册制制度规则",
             issuer="SSE/SZSE",
-            url=_SZSE_CHINEXT_PROVISIONS,
-            note=_UNVERIFIED,
+            document_number="上证发〔2026〕41号；主板适用起点为证监会 2023-02-17 全面注册制规则发布",
+            url=_SSE_TRADING_RULES_2026,
+            verified_online=True,
+            note=_VERIFIED + "：3.3.13“属于下列情形之一的股票，不实行价格涨跌幅限制：（一）首次公开发行上市的股票上市后的前5个交易日”为全市场条款；主板 2023-02-17 起点经上海市金融委等公开来源核实",
         ),
         RuleReference(
             area="t_plus_one",
-            rule="当日买入的股票不得当日卖出（T+1）",
-            source_title="上海证券交易所交易规则 / 深圳证券交易所交易规则（回转交易限制章节）",
+            rule="投资者买入的证券，在交收前不得卖出（回转交易品种除外）",
+            source_title="上海证券交易所交易规则（2026年修订）3.1.4",
             issuer="SSE/SZSE",
-            note=_UNVERIFIED,
+            document_number="上证发〔2026〕41号",
+            url=_SSE_TRADING_RULES_2026,
+            verified_online=True,
+            note=_VERIFIED + "：3.1.4 原文；A股不在当日回转交易品种之列",
         ),
         RuleReference(
             area="lot_and_tick",
-            rule="买入申报为 100 股整数倍，卖出可含零股；最小价格变动 0.01 元",
-            source_title="上海证券交易所交易规则 / 深圳证券交易所交易规则（申报数量与价格章节）",
+            rule="竞价买入申报为 100 股或其整数倍，卖出余额不足 100 股须一次性申报；A 股最小价格变动单位 0.01 元",
+            source_title="上海证券交易所交易规则（2026年修订）3.3.8 / 3.3.11",
             issuer="SSE/SZSE",
-            note=_UNVERIFIED,
+            document_number="上证发〔2026〕41号",
+            url=_SSE_TRADING_RULES_2026,
+            verified_online=True,
+            note=_VERIFIED + "：3.3.8 与 3.3.11 原文",
         ),
         RuleReference(
             area="continuous_auction_sessions",
-            rule="连续竞价时段 9:30-11:30、13:00-15:00",
-            source_title="上海证券交易所交易规则 / 深圳证券交易所交易规则（交易时段章节）",
+            rule="申报接受 9:15-9:25、9:30-11:30、13:00-15:00；连续竞价撮合 9:30-11:30、13:00-14:57，14:57-15:00 为收盘集合竞价",
+            source_title="上海证券交易所交易规则（2026年修订）3.3.1 / 2.4.2",
             issuer="SSE/SZSE",
-            note=_UNVERIFIED,
+            document_number="上证发〔2026〕41号",
+            url=_SSE_TRADING_RULES_2026,
+            verified_online=True,
+            note=_VERIFIED
+            + "：3.3.1 申报时间与 2.4.2 时段划分原文；本平台以申报接受窗口（9:30-11:30、13:00-15:00）判定可交易，14:57-15:00 收盘集合竞价按连续撮合近似（建模简化）",
         ),
         RuleReference(
             area="after_hours_fixed_price",
-            rule="科创板/创业板盘后固定价格交易：申报 9:30-11:30、13:00-15:30，15:05-15:30 按收盘价撮合",
-            source_title="上海证券交易所科创板股票盘后固定价格交易指引 / 深圳证券交易所创业板交易特别规定",
+            rule="盘后固定价格交易适用全部 A 股与 ETF：申报 9:30-11:30、13:00-15:30（当日有效），15:05-15:30 以收盘价按时间优先撮合；收盘价高于买入限价或低于卖出限价的申报无效；15:00 仍停牌不参与",
+            source_title="上海证券交易所交易规则（2026年修订）3.7.1-3.7.11",
             issuer="SSE/SZSE",
-            document_number="上证发〔2019〕21号",
-            note=_UNVERIFIED + "；时段与申报窗口以指引原文为准",
+            document_number="上证发〔2026〕41号（已取代科创板盘后固定价格交易指引〔2019〕21号的板块限制，暂缓实施条文仅涉大宗交易 3.6.x）",
+            url=_SSE_TRADING_RULES_2026,
+            verified_online=True,
+            note=_VERIFIED
+            + "：3.7.1 适用范围、3.7.2 时段与停牌、3.7.3 申报窗口与撤销、3.7.5 限价不等式、3.7.7 当日有效、3.7.8 收盘价逐笔撮合原文",
         ),
         RuleReference(
             area="trading_calendar_holidays",
-            rule="周末与法定节假日休市；节假日安排按年发布",
-            source_title="上海证券交易所交易规则 / 深圳证券交易所交易规则（休市安排）与国务院办公厅节假日安排通知",
+            rule="周末与法定节假日休市，按国务院办公厅年度通知与交易所休市安排执行",
+            source_title="上交所 2026 年休市安排公告 / 国务院办公厅节假日安排通知",
             issuer="SSE/SZSE",
-            note=_UNVERIFIED + "；2023-2026 静态数据需逐年核对，2027+ 由外部数据文件供给",
+            document_number="国办发明电〔2025〕7号",
+            url=_SSE_CLOSURE_PAGE,
+            verified_online=True,
+            note=_VERIFIED
+            + "：2026 全年休市已逐日对照上交所公告（发现并修正 2026-02-23 春节休市遗漏）；2023–2025 静态数据尚未逐年复核",
         ),
     )
 }
