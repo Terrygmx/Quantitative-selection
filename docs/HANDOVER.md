@@ -1,114 +1,101 @@
 # 工作交接（Handover）
 
-更新时间：2026-10-25（第三轮）。当前 HEAD 见 `git log`，工作树干净，分支 `main`。
+> 面向接手协作或继续开发的 agent。本文档自包含：读完即可按约定开工，无需 archaeology。
+> 更新时间：2026-10-25。HEAD `0648baa`，分支 `feat/followup-integration`（领先 main 18 个提交，main 领先远端约 109 个），工作树干净。
 
-## 工作循环约定（必须遵守）
+## 1. 项目一句话
 
-1. 从 `docs/TODO.md` 按顺序选取下一个未完成项，一次只做一个最小纵向切片。
-2. 严格 TDD：先写失败测试（Red），再写最小实现（Green），必要时重构（Refactor）。不得修改测试去迎合错误实现；发现测试期望写错时要说明理由后修正测试。
-3. 切片完成后必须 review：对照 `docs/DETAILED_DESIGN.md` 与 `docs/TDD_VIBE_CODING_PLAN.md` 检查 TDD 顺序、领域零 IO、费用/规则复用是否一致。review 发现的问题用新的 Red 测试驱动修复。
-4. 修不了的写入 `docs/TODO.md`，不要静默跳过。
-5. 每个完成的切片用独立非 amend 提交，提交信息说明测试证据（Red → Green）。
-6. 不做破坏性 git 操作，不删遗留代码 `src/tail_momentum_selector.py`，不访问网络。
+A 股多策略量化研究平台：策略以插件接入，经 PIT（Point-in-Time）数据门户 → 信号 → 组合风控 → 共享成交内核 → 回测/模拟盘，全链路 A 股规则保真（T+1、涨跌停、整手、时段、盘后定价）、防未来函数、可审计、fail closed。**实盘下单是 PRD 明确非目标**（已结构化锁定，见 §6）。
 
-## 验证命令（每次提交前全跑）
+前身 `src/tail_momentum_selector.py`（1358 行单文件尾盘动量扫描器）已冻结为 legacy 基线：**只读不改**，测试可导入它做等价对照。
+
+## 2. 当前状态（全部验证通过）
 
 ```bash
-python3 -m pytest --ignore=tests/performance
+python3 -m pytest --ignore=tests/performance   # 407 passed, 1 skipped
 python3 -m coverage run -m pytest --ignore=tests/performance
-python3 -m coverage report --fail-under=90
-python3 -m ruff check src/quant_agent tests
-python3 -m mypy src/quant_agent
+python3 -m coverage report --fail-under=90     # 93%
+python3 -m ruff check src/quant_agent tests    # clean
+python3 -m mypy src/quant_agent                # 0 errors（CI 阻断）
+python3 -m pytest tests/performance            # 日频基准，单独跑
 ```
 
-当前基线（feat/followup-integration 分支）：408 个测试（407 通过；1 个 westock 真实缓存等价测试在无 cache/ 的环境跳过），覆盖率 93%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**；日频性能基准同机对照确认无回归。注：westock 真实缓存等价测试在无 cache/ 的环境跳过；此前个别提交信息中的测试计数与反引号文本有误，以本条与 git diff 为准。
+- 唯一 skip：`test_parser_output_matches_legacy_on_real_cached_response`（依赖本机 `cache/` 真实 westock 缓存，CI 无此目录）。
+- 性能基准：3000 标的×5 年日频回测，空闲机 67–84s；同机对照法排除过一次伪回归（对照 `git worktree add /tmp/x <旧提交>` 跑同基准）。
+- Docker 实机验证过：镜像构建、五 CLI 导入、无审批 fail closed（退出码 2）、approve→dry-run 全流程。
+- westock CLI 在本机 `~/.local/bin/westock`（Go 二进制，PATH 可见），适配器已真实联调。
 
-## 最近完成的工作（本次会话：M7 队列 + M8 类型债务）
+## 3. 工作循环约定（必须遵守）
 
-- `dcf37e3` M7 盘后延迟撮合队列：策略配置顶层 `"session": "after_hours_fixed"`（默认 `continuous`，非法值 fail closed）；盘中申报先过（已公开的）规则申报门，进 `AfterHoursIntent` 日级队列（`QUEUED_AFTER_HOURS`，不动现金持仓）；15:05–15:30 内运行时按当时快照 `last`（收盘价）无滑点撮合，走共享内核、规则全量裁决；跨日意图 `EXPIRED`；撮合结果保留意图 id 并附 `submitted_at`。两次测试期望修正均附理由（15:10 运行会同时撮合排队意图并立即成交新申报；重复申报累积队列）。
-- `72fa635` M8 类型债务清零：mypy 41（会话起点）→ 0 并入 CI。要点：金样引擎 `bars` 注解由错误的 `Mapping[str, object]` 改为 `Sequence[Mapping[str, object]]`（原注解使 `list(bars)` 成为键列表）、`_bar_date` 校验辅助、`Event` 携带 `OrderRecord`；registry 落实 DETAILED_DESIGN §4 的 `Strategy` 协议；portfolio/metrics 对非数值输入以 ValueError fail closed（修掉字符串价格字典序比较胜率的静默错误）；`memory_audit_sink` 去掉错误的 `-> None`。
+1. 从 `docs/TODO.md` 选未完成项，一次一个最小纵向切片。
+2. **严格 TDD**：先写失败测试（Red），最小实现（Green），按需重构。不改测试迎合实现；发现测试期望写错要说明理由后修正。
+3. 切片完成必须 review：对照 `docs/DETAILED_DESIGN.md` 与 `docs/TDD_VIBE_CODING_PLAN.md` 检查 TDD 顺序、领域零 IO、费用/规则复用。review 问题用新 Red 测试驱动修复，再复审。
+4. 修不了的写入 `docs/TODO.md`，不静默跳过。
+5. 每切片独立非 amend 提交，提交信息带 Red→Green 证据。
+6. 不做破坏性 git 操作；不删 legacy；**网络访问需用户明确授权**（本会话曾授权过：规则核对、duckdb 安装、westock 联调均在其下完成）。
+7. 提交信息含反引号会被 shell 吞字——用引号包裹或避免反引号。
+8. 文档（RUNBOOK/TODO/HANDOVER）随切片同步，这是合并检查清单要求。
 
-## 最近完成（补：网络授权后的两项）
+## 4. 架构地图（src/quant_agent/）
 
-- `d08c681` + `26a7f64` DuckDB 适配器：`DuckDBMarketDataPort`（`bars` 表、TIMESTAMPTZ 列、只读连接、全部读错误 fail closed）接入契约套件第四套参数化实现；`duckdb==2.0.0` 列入 requirements-dev 由 CI 覆盖。
-- `7fb758a` 规则引用在线核对：全部 8 个领域对照上交所《交易规则（2026 年修订）》（上证发〔2026〕41 号）原文与官方休市公告核实，登记表带条款号证据。
-- `d90721f` 核对差异修复 1：盘后定价全市场适用（3.7.1，废除板块限制）+ 限价不等式（3.7.5，买：收盘价高于限价才无效；卖反之）。
-- `20d9832` 核对差异修复 2：静态日历补 2026-02-23 春节休市（上交所公告逐日核对后唯一差异）。
-- `f76d76d` 核对差异修复 3：新股前 5 日无涨跌幅按板块注册制落地日期建模（主板 2023-02-17、创业 2020-08-24、科创 2019-07-22）。
+```
+domain/        零 IO：Instrument/Bar(adjustment)/Signal/Order(session)/RunManifest
+rules/         唯一裁决者：trading.py（涨跌停方向语义/T+1/整手/时段/盘后定价/申报门/
+               交易所区分窗口）、calendar.py（2023–2026 静态+外部文件源）、references.py
+application/   execution.py（ExecutionCore：成交/费用/滑点/tick/现金/T+1 唯一份；
+               fill_model=slippage|next_open|vwap；board_queue_policy=reject|queue_fill）
+               backtest.py（日频多标的引擎；BacktestEngine 金样引擎冻结勿迁）
+               intraday.py（分钟引擎 + prefetched() 游标优化工厂）
+               grid.py（网格驻留限价单引擎，日界结算）
+               portfolio.py（SignalComposer：blocked_strategies 质量门 + 风控约束）
+               metrics.py / runs.py / features.py（FeatureStore 定义锁 + Persistent 持久化）
+               data_layers.py（RawStore 内容寻址 + CuratedStore Parquet/DuckDB 血缘）
+adapters/      market_data.py（InMemory/Csv/Parquet/DuckDB 四端口 + 质量事件）
+               westock.py（Markdown 解析与 legacy 逐字段锁定；缓存/在线双源）
+               normalize.py（规范化层：代码/时区/adjustment 不混用）
+               calendar.py（外部交易日历文件源）
+strategies/    5 插件：tail_momentum/ trend_breakout/ mean_reversion/ low_vol_quality/
+               industry_rotation/（各含 strategy.py + config.schema.json + README）
+               registry.py（启停/版本历史/回滚 + StrategyMetadata.turnover_cap/risk_exposure）
+               reporting.py（文本 + 自包含 HTML）、context.py、schema.py
+agents/        gateway.py（审计 + tool_executors 执行）、roles.py（四角色边界）、
+               role_tools.py（工具执行体）、prompts.py（角色提示模板）、paper.py（模拟盘）
+cli/           paper / strategy / backtest / report / agent 五入口
+```
 
-## 补：第 3 项 westock 适配器（`db8a41a`）
+测试布局：`tests/unit/{domain,rules,application,strategies,agents,portfolio,backtest,data,configs,cli}`、`tests/contract/`（端口契约参数化 4 实现）、`tests/performance/`、`tests/fixtures/legacy/`（脱敏金样）。
 
-CLI 为本机 Go 二进制 `~/.local/bin/westock`（PATH 可见，无需 `WESTOCK_CLI`）。`adapters/westock.py`：解析与 legacy 在固定夹具及真实缓存 `k_sh600176.md` 上逐字段等价（运行时不 import legacy）；`WestockMarketDataAdapter` 走 PIT 契约（抓取时刻门 + 日线收盘 bar 收盘后可见 + block 质量事件）；`CachedKlineSource` 离线读 `k_{symbol}.md`，`WestockCliKlineSource` 在线组 legacy 命令行（字节读+显式 UTF-8）。已用真实二进制联调（60 根日线，PIT 门完整）。用法见 RUNBOOK「westock 适配器」。
+## 5. 硬约束（违反即 review 打回）
 
-## 最近完成（第四轮：剩余待办循环）
+1. **domain 零 IO**；**rules 是交易规则唯一裁决者**——任何引擎/执行器不得绕过（引擎只问「这单行不行」和「现在是不是某时段」两个公开 API）。
+2. **成交账本只有一份**（ExecutionCore）：新增执行路径必须走它；冻结的 `BacktestEngine` 例外（金样回归夹具）。
+3. **PIT 防未来由构造保证**：数据按 `as_of` 查询、`available_at >= timestamp` 不变量；日频收盘 bar 收盘后才可见；网格/分钟引擎的决策只用当前 bar 及之前。
+4. **fail closed**：配置缺失/数据缺失/非法输入一律报错拒绝（退出码 2），绝不静默放行或猜测。
+5. `universe` 必填；审批账本 `state/paper-approvals.json` 与 `config_hash` 绑定不可绕过；**prod 恒 dry-run**。
+6. 引用诚实原则：`rules/references.py` 的 `verified_online=False` 必须附注；产物带免责声明。
 
-- `67b49c4` 日历逐年复核：2023 全对；2024 补 2/12–2/14（春节休市 2/9–2/17）、2025 补 10/8（国庆中秋休至 10/8），均对照交易所公告。
-- `72bf64c` 深交所对齐经证监会官方发布确认（创业板 20% 维持、盘后定价扩全市场；深交所 docx 未逐行解析，已如实注明）。
-- `0cfb5ea`+`704fb4a`+`61e9743` FR-6 CLI：`quant_agent.cli.strategy list`（显式注册表）与 `quant_agent.cli.backtest run`（CSV 日线→共享内核→orders/fills/summary JSON；退出码约定与 paper CLI 一致）；review 补 mypy 方差修复与 RUNBOOK。
-- `989297c` 可替换成交模型（§7）：`fill_model = slippage（默认）/ next_open / vwap`，配置贯穿两引擎与回测 CLI，vwap 缺 amount/volume fail closed，新增跨引擎等价锁定。
-- `a34d1bc` trend_breakout 日频策略插件（§6 #2）：唐奇安收盘突破 + 突破前 MA 上行过滤（同窗 MA 对收盘突破数学上恒上行，故过滤在突破前历史 上判定——TDD 逼出的设计修正），schema/README/注册齐备。
+## 6. 实盘非目标的锁定方式
 
-## 最近完成（第五轮）
+`tests/unit/configs/test_environments.py` 锁定：agents 包仅暴露 `PaperExecution` 协议 + `SimulatedPaperExecution` 唯一具体执行器；全包禁止 Live/Real/Broker 执行器类名；网关拒绝 live 工具。未来做实盘 = 显式改这些测试 = 强制设计评审。不要绕开。
 
-- `d88dcea` 策略 #3 `mean_reversion_liquid`：跌前 MA5 超跌（跌幅不稀释自身度量）+ MA20 上方 + 5 日均额流动性门，持有 5 日。
-- `5781af9`+`1df08a8` 策略 #4 `low_vol_quality`：20 日收益波动 ≤1.5% + 60 日均线上方 + 流动性门，持有 20 日；§6 四策略全齐。
-- `e691512` CLI `report show`（信号 JSON→文本，reporting 支持自定义标题）+ 回测 `--start/--end/--split`（样本内/外两段独立回测，FR-3.1）。
-- `05ec011` Agent 四角色工具边界（§8）：`agents/roles.py` 角色 allow/forbid 表，网关 `role_bindings` 强制执行（跨角色 `ROLE_TOOL_NOT_ALLOWED`、未知 Agent `AGENT_ROLE_UNKNOWN`，均审计；无绑定时行为不变）。
+## 7. 剩余工作（按需项，无计划内欠账）
 
-## 最近完成（第五轮续）
+1. **合并分支**：`feat/followup-integration` → main → push（用户未授权 push；远端落后约 109 提交）。
+2. 深交所静态日历独立逐年复核（历年公告一致，未逐份对深交所原文）。
+3. 分钟频规模化基准（待真实分钟数据规模需求）。
+4. 排队/网格模型的柜台级精细度（部分成交、挂单撤销）——待实盘需求。
+5. 管线组装层接线：`compose(blocked_strategies=collector.blocked_strategy_ids())`（API 已就绪，调用点待建）。
+6. 深化方向（PRD 内）：`Signal` 的置信度/相关性预算已在 composer 有接口，可做多策略实盘组合研究；数据侧可接更多源（照 CSV/Parquet 工厂模式）。
 
-- `883043c` 回测 `--benchmark SYMBOL`（同一份 bars 的买入持有收益 + `excess_return`，未知标的 fail closed）与 `--window N`（连续滚动窗口逐段独立回测，与 `--split` 互斥）——FR-3.1 的滚动窗口/基准比较闭环。
-- `76ebbb5` CLI `agent review`（审计 JSONL → 总量/按状态/按 Agent 计数 + 拒绝明细，坏行 fail closed，FR-6 全部四条命令齐备）；`application/features.py` Feature Store（§5.4：特征名绑定唯一参数哈希，同名不同定义拒绝，值按 (name, symbol, 计算时点) 存取）。
+## 8. 历史速览（十轮循环，详见 git log）
 
-## 最近完成（feat/minute-backtest 分支）
+M0 基线 → M1–M8 里程碑（域模型/规则/PIT/回测/插件/组合/模拟盘/质量闸门）→ 共享成交内核+性能回归修复 → 日历外部源 → 金样 excluded 路径 → 盘后定价（在线核对 2026 沪深新规并修复 4 处差异）→ Mypy 清零入 CI → DuckDB/CSV/Parquet 端口 → westock 适配器（真实联调）→ CLI 四入口 + 可替换成交模型 + trend_breakout → mean_reversion/low_vol_quality + block 门 + 角色边界 → 分钟频回测 + 游标优化 → 数据分层 + 角色工具 + industry_rotation + 四环境/Docker → 注册表生命周期 + Normalized 层 → HTML 报告 + 提示词模板 + 实盘锁定。
 
-- `fd7cffa` 分钟频回测（FR-3.1 最后一项）：`application/intraday.MinuteBacktestEngine` 每交易日按决策时刻（默认 14:31 尾盘快照语义）取最后可见分钟 bar 定价，PIT 防未来由端口构造保证，共享内核使分钟时间戳真实命中时段校验（午休决策被拒）；`backtest run --frequency minute --decision HHMM` 接入（CSV 需 available_at==bar 时间戳的重放约定；日频专用选项互斥）。review 修正 RUNBOOK/TODO 文档；FR-3.1 全部闭环。
+关键教训沉淀：mypy 净增错误两次追出真实 bug（新股无 band 崩溃、字符串价格字典序胜率）；TDD 夹具错误多次（时区 +8 方向、band 数学、锁板板块选择）——**测试失败先怀疑夹具语义再怀疑实现**。
 
-## 最近完成（第六轮：五项剩余任务循环，main 分支）
+## 9. 上手指引（新 agent 的第一个小时）
 
-- 分支合并：`feat/minute-backtest`（分钟频回测）已 no-ff 合回 main。
-- `c3c9fd5` 数据分层：`RawStore`（内容寻址 sha256、source/date 分层、原子写、自愈恢复，verify=True 拒绝篡改）+ `CuratedStore`（Parquet 按 dataset/trade_date 分区 + DuckDB 元数据血缘）。
-- `710a39f`+`8003692` Agent 角色工具执行体：`RoleToolbox`——read_approved_dataset（PIT bars，DataUnavailable 转错误载荷不越界）、draft_experiment（status=draft + 免责声明，永不生产）、create_quality_event（追加型 JSONL）、explain_signal/explain_rejection（规则原因码→人类解释，不覆盖决策）。
-- `737b5e6` `industry_rotation`：行业动量排名取 top_n、仅正动量发信号（弱市空仓）；schema 校验器补 minProperties/additionalProperties(object)。
-- `b3273ed` 四环境配置（paper 唯一非 dry-run 且强制审批；prod 恒 dry-run，§9；无密钥有测试锁定）+ Dockerfile + docker-compose（paper 服务 dry-run 命令 + 审批卷；Docker 守护进程未运行，构建契约以静态校验+YAML 验证覆盖）。
-
-## 最近完成（第七轮：后续项循环，feat/followup-integration 分支）
-
-- `e1f7ec7` 网关→工具箱集成：`AgentGateway(tool_executors=...)`，允许的角色工具真实执行（ISO/datetime 双形态参数），执行异常转审计型 `TOOL_FAILED` 拒绝不泄漏堆栈；审计序列化支持 datetime。review 修正两处测试角色前提（explain_signal/draft_experiment 属研究角色）。
-- `916cd0a` `PersistentFeatureStore`：值落 Parquet + 定义哈希 JSON 侧车，load 后定义锁语义跨进程保持。
-- `c8ffe58` 分钟引擎 `prefetched()` 工厂：每标的一次性按日分桶 + 日游标推进，消除 O(天数×标的×全历史) 重复查询，等价测试锁定结果一致；默认查询路径不变。
-- `3816af8` 深交所 2026 规则全文 PDF 逐条核对（3.1.4/2.3.2/3.3.8/3.3.11/3.3.13/3.3.14/3.6.1–3.6.5）：涨跌幅/T+1/整手/时段与实现一致；**发现并修复**盘后申报窗口深市 9:15 起（`after_hours_submission_gate` 按交易所区分）。
-- Docker 实机构建验证：镜像构建、五 CLI 导入、`strategy list` 五插件、无审批 fail closed（退出码 2）、`approve`→`run --dry-run` 全流程（退出码 0）全部通过。
-
-## 最近完成（第八轮：两类策略建模扩展，feat/followup-integration 分支）
-
-- `f4f6bc6`+`43b3484`+`2eabe5f` **涨跌停排队成交模型**（解锁打板/涨停动量类）：`ExecutionCore.board_queue_policy`（默认 reject 不变；queue_fill 下规则层裁决锁板 + 快照 `board_volume` 对手盘量证据覆盖整单则按板价成交，量不足 `BOARD_QUEUE_UNFILLED`，无量回退保守拒绝）；策略贯通两引擎配置与 CLI 数据列；无部分成交（状态机无该态，如实记录）。review 发现策略未贯通引擎（对照 fill_model 先例）并修复。
-- `f9f95f6`+`c38100e` **网格引擎**（解锁网格类）：`GridBacktestEngine` 格位驻留限价单——下穿格位买入/上穿卖出（按格价成交、无滑点），跨多格逐格成交（最近格优先），卖出按整手提交由规则层裁决 T+1，日界结算，格位超当日价格带被规则层拒绝（band 参考价=上一**交易日**收盘，review 修正）；CLI `--grid-low/--grid-high/--grid-steps` 贯通；equity 按最后可见价计价。
-- 两项 review 均以 Red 测试驱动修复；性能基准经同机对照（对照提交 101.5s vs HEAD 92.6s）确认无回归、波动属机器负载漂移。
-
-## 最近完成（第九轮：PRD 功能点 #4/#1/#2/#3）
-
-- `8427951` block 联动（FR-2.3/FR-3 硬门槛）：`QualityEventCollector.blocked_strategy_ids()` + `compose(blocked_strategies=...)`，被 block 策略的信号在约束评估前拒绝并审计 `STRATEGY_BLOCKED`（不影响净额计算）。复审记录：compose 的生产调用点在未来管线组装层。
-- `d28fb31` 注册表生命周期（FR-1）：同 id 新版本升级 + 全版本历史 + disable/enable 门控 list/run_all + rollback 任意已注册版本（新版本保留可回滚前进）；`StrategyMetadata` 增 `turnover_cap`/`risk_exposure` 声明字段（FR-1.2）。
-- `5f87208` Normalized 层（§5.2）：`normalize_bars` 规范代码/CN 时区/`adjustment` 模式不混用 fail closed；`Bar.adjustment` 字段；0xxxxx 前缀歧义（SZ 股 vs SH 指数）强制交易所。复审修正启发式（原把 0xxxxx 误判为可自动解析）。
-
-## 最近完成（第十轮：PRD 非目标处理 + 次级条款收尾）
-
-- `96fd452` HTML 报告（FR-6.3）：`render_signal_report_html` 自包含（无外链/脚本）、标题与全部动态单元格转义防注入、恒带免责声明、空态可渲染。
-- `99c494f` Agent 提示词模板（FR-5）：`render_prompt` 直接从注册表 allow/forbid 集生成四角色模板（边界改动自动同步提示词），含任务、按角色输出 JSON 契约、非执行指令声明；未知角色 KeyError fail closed。
-- `9e8df3d` 实盘非目标结构化锁定：agents 包仅暴露 PaperExecution 协议 + SimulatedPaperExecution 唯一具体执行器、全包无 Live/Real/Broker 执行器类名、网关拒绝 live 工具——全部测试锁定，未来实盘必须显式改测试即强制评审。
-
-## 剩余 TODO（全部为按需项，无计划内未实现功能）
-
-1. 深交所静态日历的独立逐年复核（历年公告一致）。
-2. 分钟频规模化基准待真实分钟数据规模需求；排队/网格柜台级精细度（部分成交、挂单撤销）待实盘需求。
-3. compose 调用点在管线组装层接 `blocked_strategy_ids()`（API 已就绪）。
-4. 分支 feat/followup-integration 合回 main 并推送（远端落后约 110 提交）。
-
-## 关键文件与约束
-
-- 领域层（`src/quant_agent/domain/`）必须零 IO。规则层（`src/quant_agent/rules/``）是涨跌停（含方向语义）、T+1、整手、时段（连续竞价、盘后定价申报/撮合窗口）的唯一裁决者；申报门 `after_hours_submission_gate` 与撮合窗口 `is_after_hours_fixed_price_session` 是引擎可调用的公开 API。
-- 成交、费用、滑点、tick 取整、现金与 T+1 账本只在 `application/execution.py` 的 `ExecutionCore` 中存在一份；两引擎定价必须走 `ExecutionCore.order_price`（含 `session` 参数）。冻结的单票金样引擎 `BacktestEngine` 保留自有费用计算作为回归夹具，勿迁移。
-- `SimulatedPaperExecution` 约定：`universe` 必填（缺失 ValueError/退出码 2）；非法价格 → `INVALID_PRICE`；`previous_close` 缺失/非法回退 `last`；`session` 键仅接受 `continuous`/`after_hours_fixed`；盘后意图按日有效、绝不以连续竞价价格成交。
-- 审批账本 `state/paper-approvals.json` 与 `config_hash` 绑定（`session` 键随配置一并绑定审计），任何人不得绕过。
-- 外部交易日历、数据适配器契约、盘后定价会话的配置与语义见 `docs/RUNBOOK.md` 对应章节。
+1. 跑 §2 全套验证命令，确认全绿。
+2. 读 `docs/DETAILED_DESIGN.md`（§3 领域模型、§7 成交、§8 Agent）和本文件 §5。
+3. 挑 `docs/TODO.md` 一项或 §7 一项，写 Red 测试，开始循环。
+4. 有疑义看同类实现：端口适配器抄 `adapters/calendar.py`（最小）、策略抄 `strategies/trend_breakout/`（完整）、引擎改动先看 `application/execution.py` 的等价测试怎么写。
