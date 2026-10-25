@@ -17,7 +17,7 @@
 
 - [x] 同一时间戳多修订版本的 PIT 查询已按 `available_at` 取最新可见版本。
 - [x] `QualityEventCollector` 已支持 pass/warn/block 分级校验、JSONL 持久化与按策略隔离查询。
-- [x] 已沉淀 `tests/contract/test_market_data_port.py`；CSV（标准库）与 Parquet（可选 `pyarrow`，惰性导入）适配器已按同一契约参数化接入（未来数据不可见、最新可见修订、缺数据 fail closed；文件解析按行号 fail closed）。DuckDB 适配器待依赖离线可用后接入。
+- [x] 已沉淀 `tests/contract/test_market_data_port.py`；CSV（标准库）、Parquet（可选 `pyarrow`）、DuckDB（可选 `duckdb`，`bars` 表 TIMESTAMPTZ 列）适配器均已按同一契约参数化接入（未来数据不可见、最新可见修订、缺数据 fail closed；文件/库解析按行号 fail closed）。
 
 ## M4 回测器
 

@@ -6,11 +6,11 @@
 python3 -m pip install -r requirements.txt -r requirements-dev.txt
 ```
 
-核心包运行时依赖仅 `jsonschema`（Agent 结构化输出校验）和 Python 标准库；测试、覆盖率、lint 和性能工具只属于开发依赖。Parquet 数据适配器需要可选依赖 `pyarrow`（缺失时 `ParquetMarketDataPort` 构造抛 `ValueError`，CSV 与内存适配器不受影响）。
+核心包运行时依赖仅 `jsonschema`（Agent 结构化输出校验）和 Python 标准库；测试、覆盖率、lint 和性能工具只属于开发依赖。Parquet 数据适配器需要可选依赖 `pyarrow`，DuckDB 适配器需要可选依赖 `duckdb`（缺失时对应构造抛 `ValueError`，CSV 与内存适配器不受影响）。
 
 ## 数据适配器
 
-`InMemoryMarketDataPort`、`CsvMarketDataPort`、`ParquetMarketDataPort` 实现同一 PIT 契约（`tests/contract/test_market_data_port.py` 参数化三套实现：未来数据不可见、同时间戳取最新可见修订、缺数据 fail closed 抛 `DataUnavailable`）。文件适配器的列要求：`instrument,timestamp,open,high,low,close,volume` 必填，`amount,available_at` 可选（时间戳必须带时区）；缺文件、缺列、坏数值、无时区时间戳均按行号报 `ValueError`。DuckDB 适配器待依赖可用后按同一契约接入。
+`InMemoryMarketDataPort`、`CsvMarketDataPort`、`ParquetMarketDataPort`、`DuckDBMarketDataPort` 实现同一 PIT 契约（`tests/contract/test_market_data_port.py` 参数化四套实现：未来数据不可见、同时间戳取最新可见修订、缺数据 fail closed 抛 `DataUnavailable`）。文件适配器的列要求：`instrument,timestamp,open,high,low,close,volume` 必填，`amount,available_at` 可选（时间戳必须带时区）；缺文件、缺列、坏数值、无时区时间戳均按行号报 `ValueError`。Parquet 需可选依赖 `pyarrow`，DuckDB 需可选依赖 `duckdb`（缺失时构造抛 `ValueError`；两者均已列入 requirements-dev 由 CI 覆盖；DuckDB 的 `bars` 表使用 TIMESTAMPTZ 列）。
 
 ## 日常验证
 
