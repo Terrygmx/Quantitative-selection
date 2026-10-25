@@ -523,3 +523,36 @@ def test_after_hours_session_accepts_main_board_since_2026_rules():
 
     assert orders[0]["status"] == "FILLED"
     assert Decimal(str(orders[0]["price"])) == Decimal("10.05")
+
+
+def test_paper_queue_fill_uses_board_volume_evidence():
+    """Limit-up board trading: the executor fills the queued buy at the
+    board price when the snapshot carries covering opposite-side volume."""
+    config = PaperExecutionConfig(
+        initial_cash=Decimal("100000.00"),
+        board_queue_policy="queue_fill",
+    )
+    paper = SimulatedPaperExecution(
+        config=config,
+        instruments={"sh600176": instrument("sh600176")},
+        rules=TradingRulesPlugin(StaticTradingCalendar.for_exchange("SSE")),
+    )
+    strategy_config = {
+        "config_hash": "hash-1",
+        "universe": ["sh600176"],
+        "market": {
+            "sh600176": {
+                "last": "11.00",
+                "previous_close": "10.00",
+                "tradable": True,
+                "board_volume": "500",
+            }
+        },
+    }
+
+    orders = paper.execute(
+        "tail_momentum_overnight", strategy_config, RUN_AT
+    )
+
+    assert orders[0]["status"] == "FILLED"
+    assert Decimal(str(orders[0]["price"])) == Decimal("11.00")

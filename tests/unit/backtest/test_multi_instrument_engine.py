@@ -126,3 +126,41 @@ def test_multi_instrument_engine_rejects_cash_insufficient_orders():
     assert len(fills) == 0
     assert engine.cash == config.initial_cash
     assert all(engine.order_states.get(event.order.id).status == "REJECTED" for event in order_events)
+
+
+def test_daily_engine_queue_fill_reads_bar_board_volume():
+    from decimal import Decimal
+
+    config = MultiInstrumentBacktestConfig(
+        initial_cash=Decimal("100000.00"),
+        buy_quantity=100,
+        commission_rate=Decimal("0.0003"),
+        stamp_tax_rate=Decimal("0.0005"),
+        slippage_rate=Decimal("0.001"),
+        board_queue_policy="queue_fill",
+    )
+    bars = {
+        # +10% over the previous close: a locked MainBoard board.
+        "sh600519": [
+            {
+                "date": D1,
+                "open": "11.00",
+                "close": "11.00",
+                "previous_close": "10.00",
+                "board_volume": "800",
+            }
+        ],
+    }
+    engine = MultiInstrumentBacktestEngine(
+        bars=bars,
+        instruments={"sh600519": instrument("sh600519")},
+        config=config,
+        rules=TradingRulesPlugin(StaticTradingCalendar.for_exchange("SSE")),
+    )
+
+    events = engine.run()
+
+    fills = [event.fill for event in events if event.fill is not None]
+    assert [fill.price for fill in fills] == [Decimal("11.00")]
+    # run() settles T+1 at session close: 100 settled shares, none unsettled.
+    assert engine.position("sh600519").settled_qty == 100

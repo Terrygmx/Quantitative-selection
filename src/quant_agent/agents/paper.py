@@ -124,6 +124,7 @@ class PaperExecutionConfig:
     slippage_rate: Decimal = Decimal("0.001")
     buy_quantity: int = 100
     fill_model: str = "slippage"
+    board_queue_policy: str = "reject"
 
     @property
     def costs(self) -> ExecutionCosts:
@@ -162,7 +163,12 @@ class SimulatedPaperExecution:
         self.config = config
         self.instruments = dict(instruments)
         self.rules = rules
-        self.core = ExecutionCore(config.initial_cash, config.costs, rules)
+        self.core = ExecutionCore(
+            config.initial_cash,
+            config.costs,
+            rules,
+            board_queue_policy=config.board_queue_policy,
+        )
         self._order_id = 0
         self._last_prices: dict[str, Decimal] = {}
         self._previous_closes: dict[str, Decimal] = {}
@@ -489,9 +495,16 @@ class SimulatedPaperExecution:
         last = _parse_price(data.get("last"))
         previous_close = _parse_price(data.get("previous_close"))
         tradable = bool(data.get("tradable", True))
+        raw_board_volume = data.get("board_volume")
+        board_volume = (
+            _parse_price(raw_board_volume)
+            if raw_board_volume not in (None, "")
+            else None
+        )
         return MarketSnapshot(
             instrument=instrument,
             last=last,
             previous_close=previous_close if previous_close > 0 else last,
             tradable=tradable,
+            board_volume=board_volume,
         )

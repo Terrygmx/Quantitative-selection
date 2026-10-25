@@ -29,6 +29,7 @@ class BacktestConfig:
     stamp_tax_rate: Decimal
     slippage_rate: Decimal
     fill_model: str = "slippage"
+    board_queue_policy: str = "reject"
 
     @property
     def costs(self) -> ExecutionCosts:
@@ -325,7 +326,12 @@ class MultiInstrumentBacktestEngine:
         self.config = config
         self.rules = rules
         self._costs = config.costs
-        self.core = ExecutionCore(config.initial_cash, self._costs, rules)
+        self.core = ExecutionCore(
+            config.initial_cash,
+            self._costs,
+            rules,
+            board_queue_policy=config.board_queue_policy,
+        )
         self.order_states: OrderStateMachine = self.core.order_states
         self._orders: list[Order] = []
         self._fills: list[FillRecord] = []
@@ -376,11 +382,17 @@ class MultiInstrumentBacktestEngine:
         self, symbol: str, bar: Mapping[str, object], timestamp: datetime
     ) -> list[MultiInstrumentEvent]:
         instrument = self.instruments[symbol]
+        raw_board_volume = bar.get("board_volume")
         market = MarketSnapshot(
             instrument=instrument,
             last=Decimal(str(bar["open"])),
             previous_close=Decimal(str(bar["previous_close"])),
             tradable=instrument.status == "Active",
+            board_volume=(
+                Decimal(str(raw_board_volume))
+                if raw_board_volume not in (None, "")
+                else None
+            ),
         )
         order = Order(
             id=f"order-{symbol}-{len(self._orders) + 1}",
