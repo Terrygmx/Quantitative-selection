@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Low volatility quality configuration",
+  "type": "object",
+  "required": ["universe"],
+  "properties": {
+    "universe": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "minItems": 1
+    },
+    "vol_window": {"type": "integer", "minimum": 5, "maximum": 60},
+    "vol_threshold": {"type": "number", "minimum": 0.001, "maximum": 1.0},
+    "trend_window": {"type": "integer", "minimum": 20, "maximum": 250},
+    "holding_days": {"type": "integer", "minimum": 5, "maximum": 120},
+    "liquidity_amount_yi": {"type": "number", "minimum": 0}
+  },
+  "additionalProperties": false
+}

@@ -7,6 +7,7 @@ import json
 from typing import Sequence
 
 from quant_agent.strategies.registry import StrategyRegistry
+from quant_agent.strategies.low_vol_quality.strategy import LowVolQualityStrategy
 from quant_agent.strategies.mean_reversion.strategy import MeanReversionStrategy
 from quant_agent.strategies.tail_momentum.strategy import TailMomentumStrategy
 from quant_agent.strategies.trend_breakout.strategy import TrendBreakoutStrategy
@@ -19,6 +20,7 @@ def default_registry() -> StrategyRegistry:
     registry.register(TailMomentumStrategy())
     registry.register(TrendBreakoutStrategy())
     registry.register(MeanReversionStrategy())
+    registry.register(LowVolQualityStrategy())
     return registry
 
 
