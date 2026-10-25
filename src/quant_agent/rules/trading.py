@@ -13,6 +13,13 @@ from quant_agent.rules.calendar import TradingCalendar
 CHINEXT_20_PERCENT_START = date(2020, 8, 24)
 MAIN_BOARD_NO_LIMIT_LISTING_START = date(2023, 2, 17)
 STAR_NO_LIMIT_LISTING_START = date(2019, 7, 22)
+# First-5-trading-day IPO exemption start dates per board (registration
+# reform rollouts; SSE 2026 rules 3.3.13 makes the clause market-wide).
+NO_LIMIT_LISTING_START: dict[str, date] = {
+    "STAR": STAR_NO_LIMIT_LISTING_START,
+    "ChiNext": CHINEXT_20_PERCENT_START,
+    "MainBoard": MAIN_BOARD_NO_LIMIT_LISTING_START,
+}
 CN_MARKET_TZ = ZoneInfo("Asia/Shanghai")
 # After-hours fixed-price trading (盘后定价交易) covers all A-share boards
 # since the 2026 rules (SSE 3.7.1): submission 9:30-11:30 / 13:00-15:30,
@@ -67,9 +74,10 @@ class TradingRulesPlugin:
         self.calendar = calendar
 
     def _new_listing_without_limit(self, instrument: Instrument, day: date) -> bool:
-        if not self._is_trading_day(day):
+        start = NO_LIMIT_LISTING_START.get(instrument.board)
+        if start is None or instrument.listing_date < start:
             return False
-        if instrument.board not in ("STAR", "ChiNext"):
+        if not self._is_trading_day(day):
             return False
         trading_days = 0
         current = instrument.listing_date

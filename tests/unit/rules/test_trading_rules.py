@@ -593,3 +593,41 @@ def test_new_listing_without_price_band_validates_orders_without_crashing():
     )
 
     assert rejections == []
+
+
+def test_main_board_new_listings_skip_price_limit_since_registration_reform():
+    """The first-5-trading-day exemption is a market-wide clause (2026 rules
+    3.3.13 list item 1); main-board IPOs gained it with the 2023-02-17
+    full registration reform, verified online 2026-10-25."""
+    rules = TradingRulesPlugin()
+    reform_listing = instrument(
+        symbol="sh600999", board="MainBoard", listing_date=date(2024, 1, 2)
+    )
+
+    assert rules.price_limits(reform_listing, Decimal("10.00"), date(2024, 1, 2)) is None
+    assert rules.price_limits(reform_listing, Decimal("10.00"), date(2024, 1, 8)) is None
+    band = rules.price_limits(reform_listing, Decimal("10.00"), date(2024, 1, 9))
+    assert band is not None
+    assert (band.floor, band.ceiling) == (Decimal("9.00"), Decimal("11.00"))
+
+    pre_reform = instrument(
+        symbol="sh600998", board="MainBoard", listing_date=date(2020, 1, 2)
+    )
+    band = rules.price_limits(pre_reform, Decimal("10.00"), date(2020, 1, 3))
+    assert band is not None
+    assert (band.floor, band.ceiling) == (Decimal("9.00"), Decimal("11.00"))
+
+
+def test_pre_reform_chinext_listings_keep_the_band_within_first_days():
+    rules = TradingRulesPlugin()
+    pre_reform = instrument(
+        symbol="sz300001",
+        exchange="SZSE",
+        board="ChiNext",
+        listing_date=date(2015, 6, 1),
+    )
+
+    band = rules.price_limits(pre_reform, Decimal("10.00"), date(2015, 6, 2))
+
+    assert band is not None
+    assert (band.floor, band.ceiling) == (Decimal("9.00"), Decimal("11.00"))
