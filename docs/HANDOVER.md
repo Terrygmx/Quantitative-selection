@@ -21,7 +21,7 @@ python3 -m ruff check src/quant_agent tests
 python3 -m mypy src/quant_agent
 ```
 
-当前基线（feat/followup-integration 分支）：394 个测试（393 通过；1 个 westock 真实缓存等价测试在无 cache/ 的环境跳过），覆盖率 93%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**；日频性能基准同机对照确认无回归（本时段 92.6–101.5s 属机器负载漂移，空闲带 67–84s）。注：westock 真实缓存等价测试在无 cache/ 的环境跳过；此前个别提交信息中的测试计数与反引号文本有误，以本条与 git diff 为准。
+当前基线（feat/followup-integration 分支）：402 个测试（401 通过；1 个 westock 真实缓存等价测试在无 cache/ 的环境跳过），覆盖率 93%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**；日频性能基准同机对照确认无回归（本时段 92.6–101.5s 属机器负载漂移，空闲带 67–84s）。注：westock 真实缓存等价测试在无 cache/ 的环境跳过；此前个别提交信息中的测试计数与反引号文本有误，以本条与 git diff 为准。
 
 ## 最近完成的工作（本次会话：M7 队列 + M8 类型债务）
 
@@ -86,11 +86,18 @@ CLI 为本机 Go 二进制 `~/.local/bin/westock`（PATH 可见，无需 `WESTOC
 - `f9f95f6`+`c38100e` **网格引擎**（解锁网格类）：`GridBacktestEngine` 格位驻留限价单——下穿格位买入/上穿卖出（按格价成交、无滑点），跨多格逐格成交（最近格优先），卖出按整手提交由规则层裁决 T+1，日界结算，格位超当日价格带被规则层拒绝（band 参考价=上一**交易日**收盘，review 修正）；CLI `--grid-low/--grid-high/--grid-steps` 贯通；equity 按最后可见价计价。
 - 两项 review 均以 Red 测试驱动修复；性能基准经同机对照（对照提交 101.5s vs HEAD 92.6s）确认无回归、波动属机器负载漂移。
 
+## 最近完成（第九轮：PRD 功能点 #4/#1/#2/#3）
+
+- `8427951` block 联动（FR-2.3/FR-3 硬门槛）：`QualityEventCollector.blocked_strategy_ids()` + `compose(blocked_strategies=...)`，被 block 策略的信号在约束评估前拒绝并审计 `STRATEGY_BLOCKED`（不影响净额计算）。复审记录：compose 的生产调用点在未来管线组装层。
+- `d28fb31` 注册表生命周期（FR-1）：同 id 新版本升级 + 全版本历史 + disable/enable 门控 list/run_all + rollback 任意已注册版本（新版本保留可回滚前进）；`StrategyMetadata` 增 `turnover_cap`/`risk_exposure` 声明字段（FR-1.2）。
+- `5f87208` Normalized 层（§5.2）：`normalize_bars` 规范代码/CN 时区/`adjustment` 模式不混用 fail closed；`Bar.adjustment` 字段；0xxxxx 前缀歧义（SZ 股 vs SH 指数）强制交易所。复审修正启发式（原把 0xxxxx 误判为可自动解析）。
+
 ## 剩余 TODO
 
 1. 实盘接口：PRD 非目标；模拟盘稳定运行 + 人工审批验收后另立评审。
 2. 深交所静态日历的独立逐年复核（历年公告一致，未逐份核对深交所原文）。
-3. 分钟频规模化基准待真实分钟数据规模需求；排队/网格模型的部分成交与挂单撤销语义（真实柜台级精细度）待有实盘对接需求时再深化。
+3. 分钟频规模化基准待真实分钟数据规模需求；排队/网格模型的柜台级精细度（部分成交、挂单撤销）待实盘需求。
+4. HTML 报告与 Agent 提示词模板（FR-6.3/FR-5 次级条款）；compose 调用点在管线组装时接 blocked_strategy_ids。
 
 ## 关键文件与约束
 

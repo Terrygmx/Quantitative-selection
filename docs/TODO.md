@@ -17,6 +17,8 @@
 
 - [x] 同一时间戳多修订版本的 PIT 查询已按 `available_at` 取最新可见版本。
 - [x] `QualityEventCollector` 已支持 pass/warn/block 分级校验、JSONL 持久化与按策略隔离查询。
+- [x] Normalized 标准化层（§5.2）：`normalize_bars` 统一代码（歧义前缀强制交易所）、CN 时区、`adjustment` 模式不混用 fail closed、ingested_at 供给可见性。
+- [x] 数据质量 block 联动（FR-2.3/FR-3 硬门槛）：`blocked_strategy_ids()` → `compose(blocked_strategies=...)` 拒绝并审计 `STRATEGY_BLOCKED`；生产管线组装时接入该调用点。
 - [x] 已沉淀 `tests/contract/test_market_data_port.py`；CSV（标准库）、Parquet（可选 `pyarrow`）、DuckDB（可选 `duckdb`，`bars` 表 TIMESTAMPTZ 列）适配器均已按同一契约参数化接入（未来数据不可见、最新可见修订、缺数据 fail closed；文件/库解析按行号 fail closed）。westock 适配器（`adapters/westock.py`）已接入：Markdown 解析与 legacy 在固定夹具及真实缓存上逐字段锁定，`CachedKlineSource` 离线复用 `k_{symbol}.md` 缓存，`WestockCliKlineSource` 在线调用本机二进制（已用真实数据联调），日线收盘 bar 到收盘后才可见。
 
 ## M4 回测器
@@ -33,6 +35,7 @@
 - [x] 插件已迁移下午动量、成交量、趋势、相对强弱、风险与市场环境完整评分链路，并通过 PIT 分钟数据生成标准信号；固定夹具评分与 `results/signals_2026-09-15.json` 的空候选、Bear 环境和门槛 80 对齐。
 - [x] 金样 `excluded_count=1` 的排除路径已锁定：当日抓取失败标的的原始响应未保存（离线不可补录），固定夹具以合成标的（分时为空 → `NO_MINUTE_DATA`）建模该失败症状，金样锁定测试现与 `results/signals_2026-09-15.json` 逐字段一致；合成来源已在 `tests/fixtures/README.md` 披露。
 - [x] `config.schema.json` 已接入零依赖运行时校验，覆盖非法配置测试矩阵；插件崩溃被隔离并生成 `PLUGIN_CRASH` 审计记录。
+- [x] 注册表生命周期（FR-1 启停与版本回滚）：同 id 新版本升级、全版本历史、disable/enable 门控 list/run_all、rollback 到任意已注册版本；`StrategyMetadata` 增 `turnover_cap`/`risk_exposure` 声明字段（FR-1.2）。
 
 ## M6 组合与风险
 
