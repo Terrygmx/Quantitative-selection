@@ -99,7 +99,7 @@ class TradingRulesPlugin:
         )
         return self._in_after_hours_fixed_price_session(instrument, local_clock)
 
-    def _after_hours_submission_gate(
+    def after_hours_submission_gate(
         self, instrument: Instrument, as_of: datetime
     ) -> Rejection | None:
         """Orders explicitly marked after_hours_fixed may be submitted from
@@ -167,7 +167,7 @@ class TradingRulesPlugin:
         if not isinstance(market, MarketSnapshot):
             raise TypeError("market must be a MarketSnapshot")
         if order.session == "after_hours_fixed":
-            gate = self._after_hours_submission_gate(
+            gate = self.after_hours_submission_gate(
                 market.instrument, order.created_at
             )
             if gate is not None:

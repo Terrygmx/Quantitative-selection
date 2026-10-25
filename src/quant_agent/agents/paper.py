@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Mapping, Protocol
+from zoneinfo import ZoneInfo
 
 from quant_agent.application.execution import (
     ExecutionCore,
@@ -17,6 +18,9 @@ from quant_agent.rules.trading import (
     MarketSnapshot,
     TradingRulesPlugin,
 )
+
+
+CN_MARKET_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _parse_price(value: object) -> Decimal:
@@ -132,6 +136,18 @@ class PaperExecutionConfig:
 PaperPosition = ExecutionPosition
 
 
+@dataclass
+class AfterHoursIntent:
+    """An after-hours fixed-price buy submitted intraday; it matches at the
+    day's closing price during 15:05-15:30 and never fills otherwise."""
+
+    intent_id: str
+    symbol: str
+    side: str
+    quantity: int
+    submitted_at: datetime
+
+
 class SimulatedPaperExecution:
     """Deterministic paper fills routed through the shared execution core."""
 
@@ -149,6 +165,7 @@ class SimulatedPaperExecution:
         self._last_prices: dict[str, Decimal] = {}
         self._previous_closes: dict[str, Decimal] = {}
         self._tradable: dict[str, bool] = {}
+        self.after_hours_queue: list[AfterHoursIntent] = []
 
     @property
     def cash(self) -> Decimal:
@@ -174,8 +191,11 @@ class SimulatedPaperExecution:
         market = config.get("market")
         if not isinstance(market, Mapping):
             raise ValueError("strategy config requires a market snapshot mapping")
+        session = self._session(config)
         universe = self._universe(config)
         orders: list[Mapping[str, object]] = []
+        if session == "after_hours_fixed":
+            orders.extend(self._match_after_hours_queue(market, run_at))
         for symbol in universe:
             if symbol not in market:
                 raise ValueError(
@@ -201,10 +221,24 @@ class SimulatedPaperExecution:
             self._previous_closes[symbol] = (
                 previous_close if previous_close > 0 else last
             )
-            orders.append(
-                self._buy_symbol(instrument, market[symbol], run_at, quantity)
-            )
+            if session == "after_hours_fixed":
+                orders.append(
+                    self._after_hours_intent(
+                        instrument, market[symbol], run_at, quantity
+                    )
+                )
+            else:
+                orders.append(
+                    self._buy_symbol(instrument, market[symbol], run_at, quantity)
+                )
         return orders
+
+    @staticmethod
+    def _session(config: Mapping[str, object]) -> str:
+        session = str(config.get("session", "continuous"))
+        if session not in ("continuous", "after_hours_fixed"):
+            raise ValueError("session must be continuous or after_hours_fixed")
+        return session
 
     @staticmethod
     def _universe(
@@ -229,6 +263,111 @@ class SimulatedPaperExecution:
                 )
             )
         return orders
+
+    def _after_hours_intent(
+        self,
+        instrument: Instrument,
+        snapshot: object,
+        timestamp: datetime,
+        quantity: int | None,
+    ) -> dict[str, object]:
+        market = self._market_snapshot(instrument, snapshot)
+        size = quantity if quantity is not None else self.config.buy_quantity
+        if market.last <= 0:
+            return self._reject_intent(
+                instrument.symbol, "buy", size, "INVALID_PRICE", timestamp
+            )
+        gate = self.rules.after_hours_submission_gate(instrument, timestamp)
+        if gate is not None:
+            return self._reject_intent(
+                instrument.symbol, "buy", size, gate.code, timestamp
+            )
+        if self.rules.is_after_hours_fixed_price_session(instrument, timestamp):
+            fill_price = self.core.order_price(
+                instrument, market.last, "buy", timestamp, session="after_hours_fixed"
+            )
+            order = self._create_order(
+                instrument.symbol, "buy", size, fill_price, timestamp,
+                session="after_hours_fixed",
+            )
+            return self._execute(order, instrument, market)
+        self._order_id += 1
+        intent = AfterHoursIntent(
+            intent_id=f"paper-{self._order_id}",
+            symbol=instrument.symbol,
+            side="buy",
+            quantity=size,
+            submitted_at=timestamp,
+        )
+        self.after_hours_queue.append(intent)
+        return self._intent_result(intent, "QUEUED_AFTER_HOURS", timestamp)
+
+    def _match_after_hours_queue(
+        self, market: Mapping[str, object], run_at: datetime
+    ) -> list[dict[str, object]]:
+        """Match day-scoped queued intents at the close during the 15:05-15:30
+        window; intents from an earlier day expire, everything else waits."""
+        results: list[dict[str, object]] = []
+        remaining: list[AfterHoursIntent] = []
+        for intent in self.after_hours_queue:
+            instrument = self.instruments.get(intent.symbol)
+            if instrument is None:
+                remaining.append(intent)
+                continue
+            if self._cn_date(intent.submitted_at) != self._cn_date(run_at):
+                results.append(self._intent_result(intent, "EXPIRED", run_at))
+                continue
+            if not self.rules.is_after_hours_fixed_price_session(instrument, run_at):
+                remaining.append(intent)
+                continue
+            snapshot = market.get(intent.symbol)
+            if not isinstance(snapshot, Mapping):
+                remaining.append(intent)
+                continue
+            market_view = self._market_snapshot(instrument, snapshot)
+            if market_view.last <= 0:
+                self.core.reject_intent(intent.intent_id, "INVALID_PRICE", run_at)
+                rejected = self._intent_result(intent, "REJECTED", run_at)
+                rejected["reason_code"] = "INVALID_PRICE"
+                results.append(rejected)
+                continue
+            price = self.core.order_price(
+                instrument, market_view.last, intent.side, run_at,
+                session="after_hours_fixed",
+            )
+            order = Order(
+                id=intent.intent_id,
+                symbol=intent.symbol,
+                side=intent.side,
+                quantity=intent.quantity,
+                limit_price=price,
+                created_at=run_at,
+                session="after_hours_fixed",
+            )
+            result = self._execute(order, instrument, market_view)
+            result["submitted_at"] = intent.submitted_at.isoformat()
+            results.append(result)
+        self.after_hours_queue = remaining
+        return results
+
+    @staticmethod
+    def _cn_date(moment: datetime) -> object:
+        return moment.astimezone(CN_MARKET_TZ).date()
+
+    def _intent_result(
+        self, intent: AfterHoursIntent, status: str, timestamp: datetime
+    ) -> dict[str, object]:
+        return {
+            "order_id": intent.intent_id,
+            "symbol": intent.symbol,
+            "side": intent.side,
+            "quantity": intent.quantity,
+            "price": "0",
+            "fee": "0",
+            "status": status,
+            "submitted_at": intent.submitted_at.isoformat(),
+            "timestamp": timestamp.isoformat(),
+        }
 
     def _buy_symbol(
         self,
@@ -322,7 +461,13 @@ class SimulatedPaperExecution:
         }
 
     def _create_order(
-        self, symbol: str, side: str, quantity: int, price: Decimal, timestamp: datetime
+        self,
+        symbol: str,
+        side: str,
+        quantity: int,
+        price: Decimal,
+        timestamp: datetime,
+        session: str = "continuous",
     ) -> Order:
         self._order_id += 1
         return Order(
@@ -332,6 +477,7 @@ class SimulatedPaperExecution:
             quantity=quantity,
             limit_price=price,
             created_at=timestamp,
+            session=session,
         )
 
     def _market_snapshot(

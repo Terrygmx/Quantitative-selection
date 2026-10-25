@@ -370,3 +370,152 @@ def test_simulated_execution_fills_after_hours_at_closing_price():
     assert paper.cash == Decimal("100000.00") - (
         Decimal("10.00") * 100 + Decimal("0.3000")
     )
+
+
+def star_execution(cash="100000.00"):
+    config = PaperExecutionConfig(
+        initial_cash=Decimal(cash),
+        commission_rate=Decimal("0.0003"),
+        stamp_tax_rate=Decimal("0.0005"),
+        slippage_rate=Decimal("0.001"),
+        buy_quantity=100,
+    )
+    star = Instrument(
+        symbol="sh688001",
+        exchange="SSE",
+        board="STAR",
+        status="Active",
+        listing_date=date(2019, 7, 22),
+        tick=Decimal("0.01"),
+        lot_size=100,
+    )
+    return SimulatedPaperExecution(
+        config=config,
+        instruments={"sh688001": star},
+        rules=TradingRulesPlugin(StaticTradingCalendar.for_exchange("SSE")),
+    )
+
+
+def after_hours_config(last="10.00", previous_close="10.00", tradable=True):
+    return {
+        "config_hash": "hash-1",
+        "session": "after_hours_fixed",
+        "universe": ["sh688001"],
+        "market": {
+            "sh688001": {
+                "last": last,
+                "previous_close": previous_close,
+                "tradable": tradable,
+            }
+        },
+    }
+
+
+def test_paper_queues_intraday_after_hours_intents_without_filling():
+    paper = star_execution()
+
+    orders = paper.execute(
+        "tail_momentum_overnight",
+        after_hours_config(last="10.00"),
+        datetime(2026, 10, 26, 14, 31, tzinfo=CN_TZ),
+    )
+
+    assert orders[0]["status"] == "QUEUED_AFTER_HOURS"
+    assert orders[0]["symbol"] == "sh688001"
+    assert paper.cash == Decimal("100000.00")
+    assert paper.position("sh688001").unsettled_buy_qty == 0
+    assert len(paper.after_hours_queue) == 1
+
+
+def test_paper_matches_queued_intents_at_the_close():
+    paper = star_execution()
+    paper.execute(
+        "tail_momentum_overnight",
+        after_hours_config(last="10.00"),
+        datetime(2026, 10, 26, 14, 31, tzinfo=CN_TZ),
+    )
+
+    orders = paper.execute(
+        "tail_momentum_overnight",
+        after_hours_config(last="10.05", previous_close="10.00"),
+        datetime(2026, 10, 26, 15, 10, tzinfo=CN_TZ),
+    )
+
+    # The 15:10 run first matches the queued intent at the close, then the
+    # fresh universe submission itself fills immediately (it is submitted
+    # inside the matching window). Both fill at 10.05 without slippage.
+    assert [order["status"] for order in orders] == ["FILLED", "FILLED"]
+    matched = orders[0]
+    assert matched["price"] == "10.05"
+    assert Decimal(str(matched["fee"])) == Decimal("0.3015")
+    assert "submitted_at" in matched
+    per_fill = Decimal("10.05") * 100 + Decimal("0.3015")
+    assert paper.cash == Decimal("100000.00") - 2 * per_fill
+    assert paper.position("sh688001").unsettled_buy_qty == 200
+    assert paper.after_hours_queue == []
+
+
+def test_queued_after_hours_intents_never_fill_outside_the_matching_window():
+    paper = star_execution()
+    paper.execute(
+        "tail_momentum_overnight",
+        after_hours_config(last="10.00"),
+        datetime(2026, 10, 26, 14, 31, tzinfo=CN_TZ),
+    )
+
+    orders = paper.execute(
+        "tail_momentum_overnight",
+        after_hours_config(last="10.00"),
+        datetime(2026, 10, 26, 14, 45, tzinfo=CN_TZ),
+    )
+
+    assert orders[0]["status"] == "QUEUED_AFTER_HOURS"
+    assert paper.cash == Decimal("100000.00")
+    assert paper.position("sh688001").unsettled_buy_qty == 0
+    # Both the 14:31 and the 14:45 intents wait for the matching window.
+    assert len(paper.after_hours_queue) == 2
+
+
+def test_stale_after_hours_intents_expire_next_day():
+    paper = star_execution()
+    paper.execute(
+        "tail_momentum_overnight",
+        after_hours_config(last="10.00"),
+        datetime(2026, 10, 26, 14, 31, tzinfo=CN_TZ),
+    )
+
+    orders = paper.execute(
+        "tail_momentum_overnight",
+        after_hours_config(last="10.00"),
+        datetime(2026, 10, 27, 14, 31, tzinfo=CN_TZ),
+    )
+
+    # The new intraday submission queues; yesterday's intent expires
+    # (after-hours intents are day-scoped). A 15:10 run would instead fill
+    # the new submission at the close, so cash assertions use 14:31.
+    statuses = [order["status"] for order in orders]
+    assert statuses == ["EXPIRED", "QUEUED_AFTER_HOURS"]
+    expired = orders[0]
+    assert expired["symbol"] == "sh688001"
+    assert paper.cash == Decimal("100000.00")
+    assert paper.position("sh688001").unsettled_buy_qty == 0
+    assert len(paper.after_hours_queue) == 1
+
+
+def test_after_hours_session_rejects_ineligible_submissions():
+    paper = execution()  # MainBoard instruments
+    config = {
+        "config_hash": "hash-1",
+        "session": "after_hours_fixed",
+        "universe": ["sh600176"],
+        "market": {
+            "sh600176": {"last": "10.05", "previous_close": "10.00", "tradable": True}
+        },
+    }
+
+    orders = paper.execute(
+        "tail_momentum_overnight", config, RUN_AT
+    )
+
+    assert orders[0]["status"] == "REJECTED"
+    assert orders[0]["reason_code"] == "AFTER_HOURS_BOARD_NOT_SUPPORTED"
