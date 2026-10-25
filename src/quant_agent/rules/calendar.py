@@ -141,6 +141,9 @@ class StaticTradingCalendar:
 
     @classmethod
     def for_sse_2026(cls) -> "StaticTradingCalendar":
+        # Aligned day by day with the SSE 2026 closure announcement
+        # (verified online 2026-10-25): Spring Festival closes Feb 15-23
+        # with trading resuming Feb 24.
         holidays = {
             date(2026, 1, 1),
             date(2026, 1, 2),
@@ -149,6 +152,7 @@ class StaticTradingCalendar:
             date(2026, 2, 18),
             date(2026, 2, 19),
             date(2026, 2, 20),
+            date(2026, 2, 23),
             date(2026, 4, 6),
             date(2026, 5, 1),
             date(2026, 5, 4),

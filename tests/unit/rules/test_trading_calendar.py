@@ -110,7 +110,10 @@ def test_calendar_protocol_is_replaceable():
         (date(2026, 2, 13), True),
         (date(2026, 2, 16), False),
         (date(2026, 2, 20), False),
-        (date(2026, 2, 23), True),
+        # SSE 2026 closure announcement: Spring Festival closes Feb 15-23,
+        # trading resumes Feb 24 (verified online 2026-10-25).
+        (date(2026, 2, 23), False),
+        (date(2026, 2, 24), True),
         (date(2026, 4, 3), True),
         (date(2026, 4, 6), False),
         (date(2026, 4, 7), True),
