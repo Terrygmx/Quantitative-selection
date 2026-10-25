@@ -10,7 +10,7 @@
 ## M2 A 股规则
 
 - [x] 交易日历已提供可替换协议、2023–2026 沪深共用静态数据与 `for_exchange` 入口；2027 及以后年份与勘误通过 `FileCalendarSource`（每行一个 ISO 日期的数据文件，`extend_builtin()` 合并内置数据，空/非法数据 fail closed）外部供给，不再猜测未发布节假日。
-- [x] 订单校验已覆盖集合竞价/午休/盘后拒绝、不同 tick 板块、涨跌停（按买卖方向语义：排队侧拒绝、对手侧可成交）、停牌、T+1 与整手规则；盘后定价交易已覆盖科创板/创业板 15:05–15:30 时段，规则强制申报价等于当日收盘价（`INVALID_AFTER_HOURS_PRICE`），共享成交内核按收盘价无滑点定价（`ExecutionCore.order_price`）。盘中提前申报已建模：`Order.session="after_hours_fixed"` 标记的订单允许在 9:30–11:30、13:00–15:30 提交（`AFTER_HOURS_BOARD_NOT_SUPPORTED` / `OUTSIDE_AFTER_HOURS_SUBMISSION_WINDOW` 拒绝违规），撮合定价恒为收盘价；引擎侧的延迟撮合队列（盘中提交、盘后执行）尚未接入模拟执行器。规则官方引用已登记于 `rules/references.py` 并由测试锁定完整性（见 `docs/RULES_REFERENCES.md`）；所有引用 `verified_online=False`，逐年/逐条在线核对仍待联网完成。
+- [x] 订单校验已覆盖集合竞价/午休/盘后拒绝、不同 tick 板块、涨跌停（按买卖方向语义：排队侧拒绝、对手侧可成交）、停牌、T+1 与整手规则；盘后定价交易已覆盖科创板/创业板 15:05–15:30 时段，规则强制申报价等于当日收盘价（`INVALID_AFTER_HOURS_PRICE`），共享成交内核按收盘价无滑点定价（`ExecutionCore.order_price`）。盘中提前申报已建模：`Order.session="after_hours_fixed"` 标记的订单允许在 9:30–11:30、13:00–15:30 提交（`AFTER_HOURS_BOARD_NOT_SUPPORTED` / `OUTSIDE_AFTER_HOURS_SUBMISSION_WINDOW` 拒绝违规），撮合定价恒为收盘价；模拟执行器已接入延迟撮合队列（配置 `session` 键，盘中排队、15:05–15:30 按收盘价撮合、跨日报 `EXPIRED`，见 RUNBOOK「盘后定价交易」）。规则官方引用已登记于 `rules/references.py` 并由测试锁定完整性（见 `docs/RULES_REFERENCES.md`）；所有引用 `verified_online=False`，逐年/逐条在线核对仍待联网完成。
 - [x] `MarketSnapshot` 显式模型是订单校验唯一市场入参，旧映射兼容分支已删除。
 
 ## M3 数据门户
@@ -44,10 +44,11 @@
 - [x] 模拟盘 Gateway 与调度器已具备配置哈希绑定的人工批准记录、dry-run 空订单计划、可注入的非 dry-run 执行器、运行时间传递和运行历史；`paper approve/run` 命令入口已提供并默认 fail closed。
 - [x] 非 dry-run 默认执行器 `SimulatedPaperExecution` 已接入 `TradingRulesPlugin`、订单状态机与 `MarketSnapshot`，覆盖 T+1 结算、佣金、印花税、滑点、最小价位、现金不足、停牌、涨跌停、非整手和非连续竞价拒绝；CLI 可从配置 `execution` 段构造执行器，缺少该段仍 fail closed。
 - [x] 默认模拟执行器与 `MultiInstrumentBacktestEngine` 已共用同一成交内核 `ExecutionCore`（`src/quant_agent/application/execution.py`）：规则校验、滑点、tick 取整、费用、现金与 T+1 账本单一来源，跨引擎等价测试锁定行为一致（成交价/费用/现金/持仓/拒绝优先级）。
-- [ ] `StaticTradingCalendar` 仍缺 2027 以后年份与外部数据源适配（同 M2 缺口）。
+- [x] `StaticTradingCalendar` 的 2027+ 与勘误已可通过 `FileCalendarSource` 外部供给（见 M2 与 RUNBOOK）。
+- [x] 模拟执行器支持盘后定价会话：配置 `session: after_hours_fixed` 时盘中申报进延迟撮合队列（`QUEUED_AFTER_HOURS`），15:05–15:30 按收盘价无滑点撮合，跨日意图 `EXPIRED`；连续竞价会话行为不变。
 
 ## M8 质量闸门
 
 - [x] 覆盖率阈值不低于 90% 已接入 CI，当前总覆盖率 96%。
-- [x] Ruff 已锁定 0.13.3 并接入 CI；Mypy 1.18.2 已锁定但现存类型债务未清零，暂未作为 CI 阻断。
+- [x] Ruff 已锁定 0.13.3 并接入 CI；Mypy 1.18.2 已锁定，类型债务已全部清零（41 → 0）并作为 CI 阻断步骤接入。
 - [x] 已建立 3000 只股票 × 5 年合成基准（本机约 70.5 秒）与 `docs/RUNBOOK.md`。
