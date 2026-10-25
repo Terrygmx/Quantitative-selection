@@ -128,6 +128,10 @@ PYTHONPATH=src python3 -m quant_agent.cli.paper \
 
 模拟成交复用 `TradingRulesPlugin` 与订单状态机：非交易时段、停牌、涨跌停、非整手与 T+1 未结算卖出都会被拒绝并记录原因码；买入按滑点后价格并量化到最小价位，卖出额外计入印花税。只有配置 `universe` 内的标的会成为下单目标，`market` 中的额外标的只作为参考数据。
 
+### 涨跌停排队成交
+
+`ExecutionCore` 支持锁板排队模型（`board_queue_policy`）：默认 `reject` 保持保守行为（排队侧拒绝对手侧可成交）；`queue_fill` 下规则层仍裁决锁板，快照带 `board_volume`（锁板期间对手盘量）且覆盖整单数量时按板价成交（正常费用/现金/T+1），量不足拒 `BOARD_QUEUE_UNFILLED`，无量数据回退原拒绝（fail closed）。日频引擎从 bar 的 `board_volume` 列读取，模拟盘从 market 快照的 `board_volume` 字段读取。无部分成交（订单状态机无该状态）；涨停买入排队需 T+1 才可卖出，与普通买入一致。解锁打板/涨停动量类策略的回测与模拟。
+
 ### 盘后定价交易
 
 策略配置可加顶层 `"session": "after_hours_fixed"`（缺省 `continuous`，行为不变；非法值 fail closed 退出码 2）。该会话仅支持科创板/创业板标的：
