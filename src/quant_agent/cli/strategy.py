@@ -8,6 +8,7 @@ from typing import Sequence
 
 from quant_agent.strategies.registry import StrategyRegistry
 from quant_agent.strategies.tail_momentum.strategy import TailMomentumStrategy
+from quant_agent.strategies.trend_breakout.strategy import TrendBreakoutStrategy
 
 
 def default_registry() -> StrategyRegistry:
@@ -15,6 +16,7 @@ def default_registry() -> StrategyRegistry:
     (DETAILED_DESIGN §4 chooses a registry over entry points)."""
     registry = StrategyRegistry()
     registry.register(TailMomentumStrategy())
+    registry.register(TrendBreakoutStrategy())
     return registry
 
 
