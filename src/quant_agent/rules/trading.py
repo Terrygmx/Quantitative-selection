@@ -12,6 +12,11 @@ from quant_agent.rules.calendar import TradingCalendar
 
 CHINEXT_20_PERCENT_START = date(2020, 8, 24)
 CN_MARKET_TZ = ZoneInfo("Asia/Shanghai")
+# After-hours fixed-price trading (盘后定价交易) exists on STAR/ChiNext only,
+# 15:05-15:30, and fills at the day's closing price.
+AFTER_HOURS_FIXED_PRICE_BOARDS = frozenset({"STAR", "ChiNext"})
+AFTER_HOURS_START = time(15, 5)
+AFTER_HOURS_END = time(15, 30)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +82,13 @@ class TradingRulesPlugin:
     def _is_trading_day(self, day: date) -> bool:
         return self.calendar.is_trading_day(day) if self.calendar else day.weekday() < 5
 
+    @staticmethod
+    def _in_after_hours_fixed_price_session(instrument: Instrument, clock: time) -> bool:
+        return (
+            instrument.board in AFTER_HOURS_FIXED_PRICE_BOARDS
+            and AFTER_HOURS_START <= clock <= AFTER_HOURS_END
+        )
+
     def tradeability(self, instrument: Instrument, as_of: datetime) -> Tradeability:
         local_time = as_of.astimezone(CN_MARKET_TZ)
         if instrument.status != "Active":
@@ -86,9 +98,11 @@ class TradingRulesPlugin:
         local_clock = local_time.time().replace(tzinfo=None)
         morning = time(9, 30) <= local_clock <= time(11, 30)
         afternoon = time(13, 0) <= local_clock <= time(15, 0)
-        if not (morning or afternoon):
-            return Tradeability(False, "OUTSIDE_CONTINUOUS_AUCTION")
-        return Tradeability(True)
+        if morning or afternoon:
+            return Tradeability(True)
+        if self._in_after_hours_fixed_price_session(instrument, local_clock):
+            return Tradeability(True)
+        return Tradeability(False, "OUTSIDE_CONTINUOUS_AUCTION")
 
     def valid_price(self, instrument: Instrument, price: Decimal) -> bool:
         return price % instrument.tick == 0
@@ -154,6 +168,19 @@ class TradingRulesPlugin:
             return [Rejection("LIMIT_UP", "order cannot fill at limit-up price")]
         if order.limit_price == band.floor and market.last == band.floor:
             return [Rejection("LIMIT_DOWN", "order cannot fill at limit-down price")]
+        local_clock = (
+            order.created_at.astimezone(CN_MARKET_TZ).time().replace(tzinfo=None)
+        )
+        if (
+            self._in_after_hours_fixed_price_session(instrument, local_clock)
+            and order.limit_price != market.last
+        ):
+            return [
+                Rejection(
+                    "INVALID_AFTER_HOURS_PRICE",
+                    "after-hours orders must price at the closing price",
+                )
+            ]
         return []
 
     def validate_fill_price(

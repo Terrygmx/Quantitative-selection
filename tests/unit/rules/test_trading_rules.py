@@ -305,3 +305,75 @@ def test_validate_order_rejects_legacy_market_mapping():
                 }
             },
         )
+
+
+@pytest.mark.parametrize(
+    ("board", "exchange", "moment", "tradable"),
+    [
+        # After-hours fixed-price session is STAR/ChiNext only, 15:05-15:30.
+        ("STAR", "SSE", datetime(2026, 9, 15, 15, 5, tzinfo=CN_TZ), True),
+        ("STAR", "SSE", datetime(2026, 9, 15, 15, 20, tzinfo=CN_TZ), True),
+        ("STAR", "SSE", datetime(2026, 9, 15, 15, 30, tzinfo=CN_TZ), True),
+        ("ChiNext", "SZSE", datetime(2026, 9, 15, 15, 10, tzinfo=CN_TZ), True),
+        ("MainBoard", "SSE", datetime(2026, 9, 15, 15, 10, tzinfo=CN_TZ), False),
+        ("STAR", "SSE", datetime(2026, 9, 15, 15, 4, tzinfo=CN_TZ), False),
+        ("STAR", "SSE", datetime(2026, 9, 15, 15, 31, tzinfo=CN_TZ), False),
+        # Continuous auction keeps its own boundaries for every board.
+        ("MainBoard", "SSE", datetime(2026, 9, 15, 9, 30, tzinfo=CN_TZ), True),
+        ("STAR", "SSE", datetime(2026, 9, 15, 15, 1, tzinfo=CN_TZ), False),
+    ],
+)
+def test_after_hours_fixed_price_session_matrix(board, exchange, moment, tradable):
+    rules = TradingRulesPlugin(StaticTradingCalendar.for_exchange(exchange))
+    item = instrument(board=board, exchange=exchange)
+
+    assert rules.tradeability(item, moment).tradable is tradable
+
+
+def test_after_hours_order_fills_only_at_closing_price():
+    rules = TradingRulesPlugin(StaticTradingCalendar.for_exchange("SSE"))
+    star = instrument(symbol="sh688001", board="STAR", exchange="SSE")
+    market = MarketSnapshot(
+        instrument=star,
+        last=Decimal("10.00"),
+        previous_close=Decimal("10.00"),
+    )
+
+    def after_hours_order(price):
+        return order(
+            symbol="sh688001",
+            limit_price=price,
+            created_at=datetime(2026, 9, 15, 15, 10, tzinfo=CN_TZ),
+        )
+
+    at_close = rules.validate_order(
+        after_hours_order(Decimal("10.00")), portfolio("sh688001"), market
+    )
+    assert at_close == []
+
+    off_close = rules.validate_order(
+        after_hours_order(Decimal("10.01")), portfolio("sh688001"), market
+    )
+    assert [item.code for item in off_close] == ["INVALID_AFTER_HOURS_PRICE"]
+
+
+def test_continuous_auction_orders_are_not_bound_to_closing_price():
+    rules = TradingRulesPlugin(StaticTradingCalendar.for_exchange("SSE"))
+    star = instrument(symbol="sh688001", board="STAR", exchange="SSE")
+    market = MarketSnapshot(
+        instrument=star,
+        last=Decimal("10.00"),
+        previous_close=Decimal("10.00"),
+    )
+
+    rejections = rules.validate_order(
+        order(
+            symbol="sh688001",
+            limit_price=Decimal("10.01"),
+            created_at=datetime(2026, 9, 15, 14, 31, tzinfo=CN_TZ),
+        ),
+        portfolio("sh688001"),
+        market,
+    )
+
+    assert rejections == []
