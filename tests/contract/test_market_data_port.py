@@ -1,8 +1,17 @@
 from datetime import datetime, timezone
+import csv
+import os
+import tempfile
 
 import pytest
 
-from quant_agent.adapters.market_data import Bar, DataUnavailable, InMemoryMarketDataPort
+from quant_agent.adapters.market_data import (
+    Bar,
+    CsvMarketDataPort,
+    DataUnavailable,
+    InMemoryMarketDataPort,
+    ParquetMarketDataPort,
+)
 
 
 AS_OF = datetime(2026, 9, 15, 14, 30, tzinfo=timezone.utc)
@@ -22,12 +31,73 @@ def bar(timestamp, close=10.0, available_at=None):
     )
 
 
+def _csv_port(bars):
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    os.close(fd)
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "instrument",
+                "timestamp",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "amount",
+                "available_at",
+            ]
+        )
+        for item in bars:
+            writer.writerow(
+                [
+                    item.instrument,
+                    item.timestamp.isoformat(),
+                    item.open,
+                    item.high,
+                    item.low,
+                    item.close,
+                    item.volume,
+                    item.amount,
+                    item.available_at.isoformat(),
+                ]
+            )
+    return CsvMarketDataPort(path)
+
+
+def _parquet_port(bars):
+    pytest.importorskip("pyarrow")
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    fd, path = tempfile.mkstemp(suffix=".parquet")
+    os.close(fd)
+    table = pa.table(
+        {
+            "instrument": [item.instrument for item in bars],
+            "timestamp": [item.timestamp.isoformat() for item in bars],
+            "open": [item.open for item in bars],
+            "high": [item.high for item in bars],
+            "low": [item.low for item in bars],
+            "close": [item.close for item in bars],
+            "volume": [item.volume for item in bars],
+            "amount": [item.amount for item in bars],
+            "available_at": [item.available_at.isoformat() for item in bars],
+        }
+    )
+    pq.write_table(table, path)
+    return ParquetMarketDataPort(path)
+
+
 @pytest.mark.parametrize(
     "make_port",
     [
         lambda bars: InMemoryMarketDataPort(bars),
+        _csv_port,
+        _parquet_port,
     ],
-    ids=["in-memory"],
+    ids=["in-memory", "csv", "parquet"],
 )
 class TestMarketDataPortContract:
     def test_excludes_future_and_unavailable_bars(self, make_port):

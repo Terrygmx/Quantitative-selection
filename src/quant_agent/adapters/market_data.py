@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+import csv
+import importlib
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Mapping
@@ -109,3 +112,109 @@ class InMemoryMarketDataPort:
                 self.quality_events.record(event)
             raise DataUnavailable(event)
         return [latest_by_timestamp[timestamp] for timestamp in sorted(latest_by_timestamp)]
+
+
+REQUIRED_BAR_COLUMNS: tuple[str, ...] = (
+    "instrument",
+    "timestamp",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+)
+
+
+def _to_float(value: object) -> float:
+    if isinstance(value, (str, int, float, Decimal)):
+        return float(value)
+    raise ValueError(f"not a number: {value!r}")
+
+
+def _bar_from_row(row: Mapping[str, object], origin: str, number: int) -> Bar:
+    try:
+        timestamp = datetime.fromisoformat(str(row["timestamp"]))
+        raw_available = row.get("available_at")
+        available_at = (
+            datetime.fromisoformat(str(raw_available))
+            if raw_available not in (None, "")
+            else timestamp
+        )
+        if timestamp.tzinfo is None or available_at.tzinfo is None:
+            raise ValueError("timestamps must include a timezone")
+        return Bar(
+            instrument=str(row["instrument"]),
+            timestamp=timestamp,
+            open=_to_float(row["open"]),
+            high=_to_float(row["high"]),
+            low=_to_float(row["low"]),
+            close=_to_float(row["close"]),
+            volume=_to_float(row["volume"]),
+            available_at=available_at,
+            amount=_to_float(row.get("amount") or 0.0),
+        )
+    except KeyError as exc:
+        raise ValueError(
+            f"{origin} row {number} is missing column: {exc.args[0]}"
+        ) from exc
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"{origin} row {number} is invalid: {exc}") from exc
+
+
+class CsvMarketDataPort:
+    """MarketDataPort over a CSV file; PIT semantics are delegated to the
+    in-memory store so file adapters cannot diverge from the contract."""
+
+    DataUnavailable = DataUnavailable
+
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        try:
+            with self.path.open("r", newline="", encoding="utf-8") as handle:
+                reader = csv.DictReader(handle)
+                headers = reader.fieldnames or []
+                missing = [
+                    column for column in REQUIRED_BAR_COLUMNS if column not in headers
+                ]
+                if missing:
+                    raise ValueError(
+                        f"missing required column(s): {', '.join(missing)}"
+                    )
+                bars = [
+                    _bar_from_row(row, "csv", number)
+                    for number, row in enumerate(reader, start=2)
+                ]
+        except OSError as exc:
+            raise ValueError(f"cannot read {self.path}: {exc}") from exc
+        self._port = InMemoryMarketDataPort(bars)
+        self.quality_events = self._port.quality_events
+
+    def bars(self, instrument: str, as_of: datetime) -> list[Bar]:
+        return self._port.bars(instrument, as_of)
+
+
+class ParquetMarketDataPort:
+    """MarketDataPort over a Parquet file. pyarrow is an optional dependency
+    and imported lazily so the package itself stays stdlib-only."""
+
+    DataUnavailable = DataUnavailable
+
+    def __init__(self, path: str | Path):
+        try:
+            parquet = importlib.import_module("pyarrow.parquet")
+        except ImportError as exc:  # pragma: no cover - environment dependent
+            raise ValueError(
+                "ParquetMarketDataPort requires the optional pyarrow package"
+            ) from exc
+        self.path = Path(path)
+        try:
+            table = parquet.read_table(self.path)
+        except OSError as exc:
+            raise ValueError(f"cannot read {self.path}: {exc}") from exc
+        rows: Sequence[Mapping[str, object]] = table.to_pylist()
+        bars = [_bar_from_row(row, "parquet", index) for index, row in enumerate(rows, start=1)]
+        self._port = InMemoryMarketDataPort(bars)
+        self.quality_events = self._port.quality_events
+
+    def bars(self, instrument: str, as_of: datetime) -> list[Bar]:
+        return self._port.bars(instrument, as_of)
