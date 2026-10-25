@@ -62,7 +62,9 @@
 - [x] 网关→工具箱集成层：`tool_executors` 注入，允许的角色工具真实执行、异常转 `TOOL_FAILED` 审计拒绝，datetime/ISO 参数双形态。
 - [x] Curated/Feature Store 持久化对接：`PersistentFeatureStore`（值落 Parquet、定义哈希落 JSON 侧车，load 后定义锁语义保持）。
 - [x] 深交所 2026 规则原文逐条核对（发现并修复盘后申报窗口 SZSE 9:15 起）。
-- [ ] 实盘接口：PRD 非目标，另立评审。
+- [x] HTML 报告（FR-6.3）：`render_signal_report_html` 自包含、全转义、恒带免责声明。
+- [x] Agent 提示词模板（FR-5）：`agents/prompts.render_prompt` 按角色 allow/forbid 集生成，任务+输出契约+非执行指令声明。
+- [x] 实盘接口：PRD 非目标已**结构化锁定**——agents 包仅暴露 PaperExecution 协议 + SimulatedPaperExecution 唯一具体执行器、无 Live/Real/Broker 类、网关拒绝 live 工具（测试锁定；未来实盘须显式改这些测试并另立评审）。
 
 ## M8 质量闸门
 

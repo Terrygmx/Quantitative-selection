@@ -21,7 +21,7 @@ python3 -m ruff check src/quant_agent tests
 python3 -m mypy src/quant_agent
 ```
 
-当前基线（feat/followup-integration 分支）：402 个测试（401 通过；1 个 westock 真实缓存等价测试在无 cache/ 的环境跳过），覆盖率 93%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**；日频性能基准同机对照确认无回归（本时段 92.6–101.5s 属机器负载漂移，空闲带 67–84s）。注：westock 真实缓存等价测试在无 cache/ 的环境跳过；此前个别提交信息中的测试计数与反引号文本有误，以本条与 git diff 为准。
+当前基线（feat/followup-integration 分支）：408 个测试（407 通过；1 个 westock 真实缓存等价测试在无 cache/ 的环境跳过），覆盖率 93%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**；日频性能基准同机对照确认无回归。注：westock 真实缓存等价测试在无 cache/ 的环境跳过；此前个别提交信息中的测试计数与反引号文本有误，以本条与 git diff 为准。
 
 ## 最近完成的工作（本次会话：M7 队列 + M8 类型债务）
 
@@ -92,12 +92,18 @@ CLI 为本机 Go 二进制 `~/.local/bin/westock`（PATH 可见，无需 `WESTOC
 - `d28fb31` 注册表生命周期（FR-1）：同 id 新版本升级 + 全版本历史 + disable/enable 门控 list/run_all + rollback 任意已注册版本（新版本保留可回滚前进）；`StrategyMetadata` 增 `turnover_cap`/`risk_exposure` 声明字段（FR-1.2）。
 - `5f87208` Normalized 层（§5.2）：`normalize_bars` 规范代码/CN 时区/`adjustment` 模式不混用 fail closed；`Bar.adjustment` 字段；0xxxxx 前缀歧义（SZ 股 vs SH 指数）强制交易所。复审修正启发式（原把 0xxxxx 误判为可自动解析）。
 
-## 剩余 TODO
+## 最近完成（第十轮：PRD 非目标处理 + 次级条款收尾）
 
-1. 实盘接口：PRD 非目标；模拟盘稳定运行 + 人工审批验收后另立评审。
-2. 深交所静态日历的独立逐年复核（历年公告一致，未逐份核对深交所原文）。
-3. 分钟频规模化基准待真实分钟数据规模需求；排队/网格模型的柜台级精细度（部分成交、挂单撤销）待实盘需求。
-4. HTML 报告与 Agent 提示词模板（FR-6.3/FR-5 次级条款）；compose 调用点在管线组装时接 blocked_strategy_ids。
+- `96fd452` HTML 报告（FR-6.3）：`render_signal_report_html` 自包含（无外链/脚本）、标题与全部动态单元格转义防注入、恒带免责声明、空态可渲染。
+- `99c494f` Agent 提示词模板（FR-5）：`render_prompt` 直接从注册表 allow/forbid 集生成四角色模板（边界改动自动同步提示词），含任务、按角色输出 JSON 契约、非执行指令声明；未知角色 KeyError fail closed。
+- `9e8df3d` 实盘非目标结构化锁定：agents 包仅暴露 PaperExecution 协议 + SimulatedPaperExecution 唯一具体执行器、全包无 Live/Real/Broker 执行器类名、网关拒绝 live 工具——全部测试锁定，未来实盘必须显式改测试即强制评审。
+
+## 剩余 TODO（全部为按需项，无计划内未实现功能）
+
+1. 深交所静态日历的独立逐年复核（历年公告一致）。
+2. 分钟频规模化基准待真实分钟数据规模需求；排队/网格柜台级精细度（部分成交、挂单撤销）待实盘需求。
+3. compose 调用点在管线组装层接 `blocked_strategy_ids()`（API 已就绪）。
+4. 分支 feat/followup-integration 合回 main 并推送（远端落后约 110 提交）。
 
 ## 关键文件与约束
 
