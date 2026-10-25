@@ -16,6 +16,7 @@ from quant_agent.application.backtest import (
     BacktestConfig,
     MultiInstrumentBacktestEngine,
 )
+from quant_agent.application.intraday import MinuteBacktestEngine
 from quant_agent.application.metrics import BacktestMetrics
 from quant_agent.domain.models import Instrument
 from quant_agent.rules.calendar import StaticTradingCalendar
@@ -83,6 +84,13 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
     end = _iso_date(args.end, "--end") if args.end else None
     split = _iso_date(args.split, "--split") if args.split else None
     window = int(args.window) if args.window else 0
+    if args.frequency == "minute":
+        if split is not None or window or args.start or args.end:
+            raise ValueError(
+                "--frequency minute runs the full minute history; "
+                "--start/--end/--split/--window are daily-frequency only"
+            )
+        return _run_minute(args)
     if split is not None and window:
         raise ValueError("--split and --window are mutually exclusive")
     if split is not None:
@@ -120,6 +128,124 @@ def _day_before(day: date) -> date:
     return day - timedelta(days=1)
 
 
+def _load_instruments(args: argparse.Namespace) -> dict[str, Instrument]:
+    instruments_data = _load_json(args.instruments)
+    if not isinstance(instruments_data, list) or not instruments_data:
+        raise ValueError("instruments must be a non-empty JSON array")
+    instruments: dict[str, Instrument] = {}
+    for item in instruments_data:
+        if not isinstance(item, Mapping):
+            raise ValueError("instrument entries must be objects")
+        try:
+            instrument = Instrument.from_dict(item)
+        except (KeyError, ValueError) as exc:
+            raise ValueError(f"invalid instrument entry: {exc}") from exc
+        instruments[instrument.symbol] = instrument
+    return instruments
+
+
+def _backtest_config(config_data: Mapping[str, object]) -> BacktestConfig:
+    buy_quantity = config_data.get("buy_quantity", 100)
+    if not isinstance(buy_quantity, int):
+        raise ValueError("buy_quantity must be an integer")
+    return BacktestConfig(
+        initial_cash=_decimal(config_data.get("initial_cash"), "initial_cash"),
+        buy_quantity=buy_quantity,
+        commission_rate=_decimal(
+            config_data.get("commission_rate", "0.0003"), "commission_rate"
+        ),
+        stamp_tax_rate=_decimal(
+            config_data.get("stamp_tax_rate", "0.0005"), "stamp_tax_rate"
+        ),
+        slippage_rate=_decimal(
+            config_data.get("slippage_rate", "0.001"), "slippage_rate"
+        ),
+        fill_model=str(config_data.get("fill_model", "slippage")),
+    )
+
+
+def _order_rows(events, engine) -> list[dict[str, object]]:
+    orders: list[dict[str, object]] = []
+    for event in events:
+        if event.order is not None:
+            state = engine.order_states.get(event.order.id)
+            orders.append(
+                {
+                    "id": event.order.id,
+                    "symbol": event.order.symbol,
+                    "side": event.order.side,
+                    "quantity": event.order.quantity,
+                    "status": state.status,
+                    **(
+                        {"rejection_code": state.rejection_code}
+                        if state.rejection_code
+                        else {}
+                    ),
+                }
+            )
+    return orders
+
+
+def _fill_rows(events) -> list[Mapping[str, object]]:
+    fills: list[Mapping[str, object]] = []
+    for event in events:
+        if event.fill is not None:
+            fills.append(
+                {
+                    "order_id": event.fill.order_id,
+                    "side": event.fill.side,
+                    "price": str(event.fill.price),
+                    "quantity": event.fill.quantity,
+                    "fee": str(event.fill.fee),
+                    "timestamp": event.fill.timestamp.isoformat(),
+                }
+            )
+    return fills
+
+
+def _run_minute(args: argparse.Namespace) -> dict[str, object]:
+    config_data = _load_json(args.config)
+    if not isinstance(config_data, Mapping):
+        raise ValueError("backtest config must be a JSON object")
+    engine = MinuteBacktestEngine(
+        port=CsvMarketDataPort(args.bars),
+        instruments=_load_instruments(args),
+        config=_backtest_config(config_data),
+        rules=TradingRulesPlugin(
+            StaticTradingCalendar.for_exchange(str(args.exchange))
+        ),
+        decision_time=str(args.decision),
+    )
+    events = engine.run()
+    return {
+        "orders": _order_rows(events, engine),
+        "fills": _fill_rows(events),
+        "summary": _final_metrics(engine, events),
+    }
+
+
+def _final_metrics(engine, events) -> dict[str, float | int]:
+    fills = _fill_rows(events)
+    if hasattr(engine, "bars"):
+        holding_value = Decimal("0")
+        for symbol, instrument_bars in engine.bars.items():
+            last_close = Decimal(str(instrument_bars[-1]["close"]))
+            position = engine.position(symbol)
+            holding_value += last_close * (
+                position.settled_qty + position.unsettled_buy_qty
+            )
+        final_equity = engine.cash + holding_value
+    else:
+        final_equity = engine.equity()
+    metrics = BacktestMetrics(
+        initial_cash=engine.config.initial_cash,
+        final_equity=final_equity,
+        equity_curve=(engine.config.initial_cash, final_equity),
+        fills=fills,
+    )
+    return metrics.summary()
+
+
 def _instrument_symbols(args: argparse.Namespace) -> list[str]:
     instruments_data = _load_json(args.instruments)
     if not isinstance(instruments_data, list) or not instruments_data:
@@ -150,104 +276,42 @@ def _run_once(
     config_data = _load_json(args.config)
     if not isinstance(config_data, Mapping):
         raise ValueError("backtest config must be a JSON object")
-    instruments_data = _load_json(args.instruments)
-    if not isinstance(instruments_data, list) or not instruments_data:
-        raise ValueError("instruments must be a non-empty JSON array")
-
-    instruments: dict[str, Instrument] = {}
-    for item in instruments_data:
-        if not isinstance(item, Mapping):
-            raise ValueError("instrument entries must be objects")
-        try:
-            instrument = Instrument.from_dict(item)
-        except (KeyError, ValueError) as exc:
-            raise ValueError(f"invalid instrument entry: {exc}") from exc
-        instruments[instrument.symbol] = instrument
-
+    instruments = _load_instruments(args)
     engine = MultiInstrumentBacktestEngine(
         bars=_bars_for_engine(
             CsvMarketDataPort(args.bars), sorted(instruments), start, end
         ),
         instruments=instruments,
-        config=BacktestConfig(
-            initial_cash=_decimal(config_data.get("initial_cash"), "initial_cash"),
-            buy_quantity=int(config_data.get("buy_quantity", 100)),
-            commission_rate=_decimal(
-                config_data.get("commission_rate", "0.0003"), "commission_rate"
-            ),
-            stamp_tax_rate=_decimal(
-                config_data.get("stamp_tax_rate", "0.0005"), "stamp_tax_rate"
-            ),
-            slippage_rate=_decimal(
-                config_data.get("slippage_rate", "0.001"), "slippage_rate"
-            ),
-            fill_model=str(config_data.get("fill_model", "slippage")),
-        ),
+        config=_backtest_config(config_data),
         rules=TradingRulesPlugin(
             StaticTradingCalendar.for_exchange(str(args.exchange))
         ),
     )
     events = engine.run()
-
-    orders: list[dict[str, object]] = []
-    fills: list[Mapping[str, object]] = []
-    for event in events:
-        if event.order is not None:
-            state = engine.order_states.get(event.order.id)
-            orders.append(
-                {
-                    "id": event.order.id,
-                    "symbol": event.order.symbol,
-                    "side": event.order.side,
-                    "quantity": event.order.quantity,
-                    "status": state.status,
-                    **(
-                        {"rejection_code": state.rejection_code}
-                        if state.rejection_code
-                        else {}
-                    ),
-                }
-            )
-        if event.fill is not None:
-            fills.append(
-                {
-                    "order_id": event.fill.order_id,
-                    "side": event.fill.side,
-                    "price": str(event.fill.price),
-                    "quantity": event.fill.quantity,
-                    "fee": str(event.fill.fee),
-                    "timestamp": event.fill.timestamp.isoformat(),
-                }
-            )
-
-    holding_value = Decimal("0")
-    for symbol, instrument_bars in engine.bars.items():
-        last_close = Decimal(str(instrument_bars[-1]["close"]))
-        position = engine.position(symbol)
-        holding_value += last_close * (
-            position.settled_qty + position.unsettled_buy_qty
-        )
-    final_equity = engine.cash + holding_value
-    metrics = BacktestMetrics(
-        initial_cash=engine.config.initial_cash,
-        final_equity=final_equity,
-        equity_curve=(engine.config.initial_cash, final_equity),
-        fills=fills,
-    )
+    orders = _order_rows(events, engine)
+    fills = _fill_rows(events)
     report: dict[str, object] = {
         "orders": orders,
         "fills": fills,
-        "summary": metrics.summary(),
+        "summary": _final_metrics(engine, events),
     }
     if args.benchmark:
         benchmark = _benchmark_report(engine, str(args.benchmark))
         report["benchmark"] = benchmark
-        summary: dict[str, float | int] = dict(metrics.summary())
+        summary: dict[str, float | int] = dict(
+            engine_summary(report["summary"])
+        )
         summary["excess_return"] = summary["total_return"] - float(
             benchmark["return"]
         )
         report["summary"] = summary
     return report
+
+
+def engine_summary(summary: object) -> dict[str, float | int]:
+    if not isinstance(summary, dict):
+        raise ValueError("engine summary must be a mapping")
+    return summary
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -258,6 +322,17 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="run a backtest")
     run.add_argument("--bars", type=Path, required=True, help="CSV bar file")
+    run.add_argument(
+        "--frequency",
+        choices=["daily", "minute"],
+        default="daily",
+        help="bar frequency of the CSV file",
+    )
+    run.add_argument(
+        "--decision",
+        default="1431",
+        help="minute-frequency decision time HHMM (default 1431)",
+    )
     run.add_argument(
         "--instruments", type=Path, required=True, help="JSON array of instruments"
     )
