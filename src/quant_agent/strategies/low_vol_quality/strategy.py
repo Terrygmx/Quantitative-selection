@@ -51,15 +51,26 @@ class LowVolQualityStrategy:
         if not isinstance(universe, list):
             raise ValueError("universe must be a list")
         validate_config(config, cls.config_schema())
+        vol_window = config.get("vol_window", DEFAULT_VOL_WINDOW)
+        trend_window = config.get("trend_window", DEFAULT_TREND_WINDOW)
+        holding_days = config.get("holding_days", DEFAULT_HOLDING_DAYS)
+        vol_threshold = config.get("vol_threshold", DEFAULT_VOL_THRESHOLD)
+        liquidity = config.get("liquidity_amount_yi", DEFAULT_LIQUIDITY_AMOUNT_YI)
+        if not (
+            isinstance(vol_window, int)
+            and isinstance(trend_window, int)
+            and isinstance(holding_days, int)
+            and isinstance(vol_threshold, (int, float))
+            and isinstance(liquidity, (int, float))
+        ):
+            raise ValueError("window/holding sizes must be integers, thresholds numbers")
         return cls(
             universe=[str(symbol) for symbol in universe],
-            vol_window=int(config.get("vol_window", DEFAULT_VOL_WINDOW)),
-            vol_threshold=float(config.get("vol_threshold", DEFAULT_VOL_THRESHOLD)),
-            trend_window=int(config.get("trend_window", DEFAULT_TREND_WINDOW)),
-            holding_days=int(config.get("holding_days", DEFAULT_HOLDING_DAYS)),
-            liquidity_amount_yi=float(
-                config.get("liquidity_amount_yi", DEFAULT_LIQUIDITY_AMOUNT_YI)
-            ),
+            vol_window=vol_window,
+            vol_threshold=float(vol_threshold),
+            trend_window=trend_window,
+            holding_days=holding_days,
+            liquidity_amount_yi=float(liquidity),
         )
 
     def validate(self, config: Mapping[str, object]) -> None:
