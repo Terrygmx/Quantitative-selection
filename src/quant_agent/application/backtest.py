@@ -298,7 +298,8 @@ class MultiInstrumentBacktestEngine:
         self.instruments = dict(instruments)
         self.config = config
         self.rules = rules
-        self.core = ExecutionCore(config.initial_cash, config.costs, rules)
+        self._costs = config.costs
+        self.core = ExecutionCore(config.initial_cash, self._costs, rules)
         self.order_states: OrderStateMachine = self.core.order_states
         self._orders: list[Order] = []
         self._fills: list[FillRecord] = []
@@ -345,7 +346,7 @@ class MultiInstrumentBacktestEngine:
             symbol=symbol,
             side="buy",
             quantity=self.config.buy_quantity,
-            limit_price=self.config.costs.fill_price(
+            limit_price=self._costs.fill_price(
                 instrument, market.last, "buy"
             ),
             created_at=timestamp,
@@ -399,7 +400,7 @@ class MultiInstrumentBacktestEngine:
             symbol=symbol,
             side="sell",
             quantity=quantity,
-            limit_price=self.config.costs.fill_price(
+            limit_price=self._costs.fill_price(
                 instrument, market.last, "sell"
             ),
             created_at=timestamp,

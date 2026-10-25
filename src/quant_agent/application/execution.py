@@ -57,6 +57,11 @@ class ExecutionPosition:
     unsettled_buy_qty: int = 0
 
 
+# Rules never consult positions for buys, so buys share one empty view
+# instead of allocating a portfolio per order.
+_EMPTY_PORTFOLIO = Portfolio({})
+
+
 class ExecutionCore:
     """Owns cash, the T+1 position ledger and the order state machine for one
     submitted order. Both the backtest and paper engines route every order
@@ -89,9 +94,12 @@ class ExecutionCore:
         market: MarketSnapshot,
     ) -> ExecutionOutcome:
         self.order_states.submit(PendingOrder(order.id, order.created_at))
-        rejections = self.rules.validate_order(
-            order, self._portfolio_view(order.symbol), market
+        portfolio = (
+            self._portfolio_view(order.symbol)
+            if order.side == "sell"
+            else _EMPTY_PORTFOLIO
         )
+        rejections = self.rules.validate_order(order, portfolio, market)
         if rejections:
             return self._reject(order, rejections[0].code)
         price = order.limit_price
