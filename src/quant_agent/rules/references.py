@@ -47,7 +47,7 @@ RULE_REFERENCES: dict[str, RuleReference] = {
             document_number="上证发〔2026〕41号",
             url=_SSE_TRADING_RULES_2026,
             verified_online=True,
-            note=_VERIFIED + "：科创板 20% 见 6.6 原文；创业板 2020-08-24 首批注册制上市起 20% 经人民网 2020-08-24 报道核实，深交所原文待取",
+            note=_VERIFIED + "：科创板 20% 见 6.6 原文；创业板 2020-08-24 起 20% 经人民网当日报道核实；2026 修订后创业板维持 20%，经证监会官方发布（csrc.gov.cn 2026-07-06）确认沪深一致",
         ),
         RuleReference(
             area="price_limits_new_listing",
@@ -99,7 +99,7 @@ RULE_REFERENCES: dict[str, RuleReference] = {
             url=_SSE_TRADING_RULES_2026,
             verified_online=True,
             note=_VERIFIED
-            + "：3.7.1 适用范围、3.7.2 时段与停牌、3.7.3 申报窗口与撤销、3.7.5 限价不等式、3.7.7 当日有效、3.7.8 收盘价逐笔撮合原文",
+            + "：3.7.1 适用范围、3.7.2 时段与停牌、3.7.3 申报窗口与撤销、3.7.5 限价不等式、3.7.7 当日有效、3.7.8 收盘价逐笔撮合原文；扩至全部 A 股与沪深 ETF 另经证监会官方发布确认（沪深一致；未逐行解析深交所 docx）",
         ),
         RuleReference(
             area="trading_calendar_holidays",
@@ -110,7 +110,7 @@ RULE_REFERENCES: dict[str, RuleReference] = {
             url=_SSE_CLOSURE_PAGE,
             verified_online=True,
             note=_VERIFIED
-            + "：2026 全年休市已逐日对照上交所公告（发现并修正 2026-02-23 春节休市遗漏）；2023–2025 静态数据尚未逐年复核",
+            + "：2023–2026 四年均已逐日对照上交所休市公告（修正 2024-02-12/13/14、2025-10-08、2026-02-23 遗漏）；主板风险警示股 5%→10% 的 2026 变化不适用（ST 在 PRD 排除范围）",
         ),
     )
 }
