@@ -123,6 +123,7 @@ class PaperExecutionConfig:
     stamp_tax_rate: Decimal = Decimal("0.0005")
     slippage_rate: Decimal = Decimal("0.001")
     buy_quantity: int = 100
+    fill_model: str = "slippage"
 
     @property
     def costs(self) -> ExecutionCosts:
@@ -130,6 +131,7 @@ class PaperExecutionConfig:
             commission_rate=self.commission_rate,
             stamp_tax_rate=self.stamp_tax_rate,
             slippage_rate=self.slippage_rate,
+            fill_model=self.fill_model,
         )
 
 

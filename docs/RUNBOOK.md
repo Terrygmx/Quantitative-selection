@@ -53,7 +53,7 @@ PYTHONPATH=src python3 -m quant_agent.cli.backtest run \
   --bars bars.csv --instruments instruments.json --config costs.json [--exchange SSE]
 ```
 
-`--bars` 使用数据适配器的 CSV 列契约（见「数据适配器」）；`--instruments` 为 `Instrument` 字段的 JSON 数组；`--config` 提供 `initial_cash/buy_quantity/commission_rate/stamp_tax_rate/slippage_rate`。输出 orders/fills/summary JSON；配置错误退出码 2。
+`--bars` 使用数据适配器的 CSV 列契约（见「数据适配器」）；`--instruments` 为 `Instrument` 字段的 JSON 数组；`--config` 提供 `initial_cash/buy_quantity/commission_rate/stamp_tax_rate/slippage_rate`，可选 `fill_model`（`slippage` 默认／`next_open` 按参考开盘价无滑点／`vwap` 按成交额÷成交量、bar 缺 `amount`/`volume` 时 fail closed；模拟盘配置 `PaperExecutionConfig` 同名字段同语义，`vwap` 在仅有点位快照的模拟盘不可用）。输出 orders/fills/summary JSON；配置错误退出码 2。
 
 ## 模拟盘命令
 

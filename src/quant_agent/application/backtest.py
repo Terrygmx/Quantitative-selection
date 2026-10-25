@@ -28,6 +28,7 @@ class BacktestConfig:
     commission_rate: Decimal
     stamp_tax_rate: Decimal
     slippage_rate: Decimal
+    fill_model: str = "slippage"
 
     @property
     def costs(self) -> ExecutionCosts:
@@ -35,6 +36,7 @@ class BacktestConfig:
             commission_rate=self.commission_rate,
             stamp_tax_rate=self.stamp_tax_rate,
             slippage_rate=self.slippage_rate,
+            fill_model=self.fill_model,
         )
 
 
@@ -355,6 +357,21 @@ class MultiInstrumentBacktestEngine:
     def position(self, symbol: str) -> ExecutionPosition:
         return self.core.position(symbol)
 
+    def _bar_reference_price(
+        self, bar: Mapping[str, object], base: Decimal
+    ) -> Decimal | None:
+        """Reference price for vwap/next_open fill models: the bar's
+        amount/volume VWAP, or the bar's own open; slippage ignores it."""
+        if self._costs.fill_model == "vwap":
+            amount = bar.get("amount")
+            volume = bar.get("volume")
+            if amount in (None, 0, "0") or volume in (None, 0, "0"):
+                raise ValueError(
+                    "vwap fill model requires amount and volume on every bar"
+                )
+            return Decimal(str(amount)) / Decimal(str(volume))
+        return base
+
     def _trade_symbol(
         self, symbol: str, bar: Mapping[str, object], timestamp: datetime
     ) -> list[MultiInstrumentEvent]:
@@ -371,7 +388,11 @@ class MultiInstrumentBacktestEngine:
             side="buy",
             quantity=self.config.buy_quantity,
             limit_price=self.core.order_price(
-                instrument, market.last, "buy", timestamp
+                instrument,
+                market.last,
+                "buy",
+                timestamp,
+                reference=self._bar_reference_price(bar, market.last),
             ),
             created_at=timestamp,
         )
@@ -425,7 +446,11 @@ class MultiInstrumentBacktestEngine:
             side="sell",
             quantity=quantity,
             limit_price=self.core.order_price(
-                instrument, market.last, "sell", timestamp
+                instrument,
+                market.last,
+                "sell",
+                timestamp,
+                reference=self._bar_reference_price(bar, market.last),
             ),
             created_at=timestamp,
         )

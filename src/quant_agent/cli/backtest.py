@@ -96,6 +96,7 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
             slippage_rate=_decimal(
                 config_data.get("slippage_rate", "0.001"), "slippage_rate"
             ),
+            fill_model=str(config_data.get("fill_model", "slippage")),
         ),
         rules=TradingRulesPlugin(
             StaticTradingCalendar.for_exchange(str(args.exchange))

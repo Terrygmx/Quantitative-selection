@@ -3,6 +3,7 @@ backtest engine must share one fill channel (DETAILED_DESIGN §7, FR-3.4).
 The same economics fed to both engines must produce the same fill prices,
 fees, cash and positions; the backtest must not grant itself privileges."""
 
+import pytest
 from datetime import date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -222,3 +223,54 @@ def test_backtest_rejection_precedence_matches_paper_rules_first():
         for event in order_events
     )
     assert backtest.cash == costs["initial_cash"]
+
+
+def test_engines_agree_under_the_next_open_fill_model():
+    """The replaceable fill model must keep the two engines equivalent."""
+    bars = [
+        {"date": D1, "open": "10.00", "close": "10.10", "previous_close": "10.00"},
+        {"date": D2, "open": "10.20", "close": "10.30", "previous_close": "10.10"},
+    ]
+    model = economics()
+    model["fill_model"] = "next_open"
+    paper = paper_engine(model)
+    backtest = backtest_engine(model, bars)
+
+    paper_orders = _paper_buys(paper)
+    backtest_fills = _backtest_buy_fills(backtest)
+
+    assert [Decimal(str(order["price"])) for order in paper_orders] == [
+        fill.price for fill in backtest_fills
+    ] == [Decimal("10.00"), Decimal("10.20")]
+    assert paper.cash == backtest.cash
+
+
+def test_backtest_vwap_model_fills_at_amount_over_volume():
+    bars = [
+        {
+            "date": D1,
+            "open": "10.00",
+            "close": "10.10",
+            "previous_close": "10.00",
+            "amount": "1010000",
+            "volume": "99400",
+        },
+    ]
+    model = economics()
+    model["fill_model"] = "vwap"
+    engine = backtest_engine(model, bars)
+
+    fills = [event.fill for event in engine.run() if event.fill is not None]
+
+    assert fills[0].price == Decimal("10.16")  # 1010000 / 99400 = 10.1609...
+
+
+def test_backtest_vwap_model_fails_closed_without_volume_data():
+    bars = [
+        {"date": D1, "open": "10.00", "close": "10.10", "previous_close": "10.00"},
+    ]
+    model = economics()
+    model["fill_model"] = "vwap"
+
+    with pytest.raises(ValueError, match="vwap"):
+        backtest_engine(model, bars).run()

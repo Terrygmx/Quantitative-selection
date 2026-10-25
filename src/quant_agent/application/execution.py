@@ -20,11 +20,21 @@ from quant_agent.rules.trading import (
 )
 
 
+FILL_MODELS = frozenset({"slippage", "next_open", "vwap"})
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutionCosts:
     commission_rate: Decimal
     stamp_tax_rate: Decimal
     slippage_rate: Decimal
+    fill_model: str = "slippage"
+
+    def __post_init__(self) -> None:
+        if self.fill_model not in FILL_MODELS:
+            raise ValueError(
+                f"fill_model must be one of {sorted(FILL_MODELS)}"
+            )
 
     def commission(self, gross: Decimal) -> Decimal:
         return gross * self.commission_rate
@@ -32,10 +42,27 @@ class ExecutionCosts:
     def stamp_tax(self, gross: Decimal) -> Decimal:
         return gross * self.stamp_tax_rate
 
-    def fill_price(self, instrument: Instrument, base: Decimal, side: str) -> Decimal:
-        factor = 1 + self.slippage_rate if side == "buy" else 1 - self.slippage_rate
+    def fill_price(
+        self,
+        instrument: Instrument,
+        base: Decimal,
+        side: str,
+        reference: Decimal | None = None,
+    ) -> Decimal:
+        """`slippage` fills at base x (1 +/- slippage); `next_open` and
+        `vwap` fill exactly at the caller-supplied reference price
+        (DETAILED_DESIGN section 7 makes the fill model replaceable)."""
+        if self.fill_model == "next_open":
+            price = reference if reference is not None else base
+        elif self.fill_model == "vwap":
+            if reference is None:
+                raise ValueError("vwap fill model requires a reference price")
+            price = reference
+        else:
+            factor = 1 + self.slippage_rate if side == "buy" else 1 - self.slippage_rate
+            price = base * factor
         # Fill prices must respect the instrument tick, or rules reject them.
-        return (base * factor).quantize(instrument.tick, rounding=ROUND_HALF_UP)
+        return price.quantize(instrument.tick, rounding=ROUND_HALF_UP)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,18 +116,19 @@ class ExecutionCore:
         side: str,
         as_of: datetime,
         session: str = "continuous",
+        reference: Decimal | None = None,
     ) -> Decimal:
         """Single pricing entry for both engines: after-hours fixed-price
         orders (marked, or submitted inside the session) fill exactly at the
-        close (rules decide); everything else fills at the slipped,
-        tick-quantized price."""
+        close (rules decide); everything else uses the configured fill
+        model, tick-quantized."""
         after_hours = (
             session == "after_hours_fixed"
             or self.rules.is_after_hours_fixed_price_session(instrument, as_of)
         )
         if after_hours:
             return base.quantize(instrument.tick, rounding=ROUND_HALF_UP)
-        return self.costs.fill_price(instrument, base, side)
+        return self.costs.fill_price(instrument, base, side, reference=reference)
 
     def settle(self) -> None:
         for position in self.positions.values():
