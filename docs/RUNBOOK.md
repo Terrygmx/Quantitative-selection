@@ -55,9 +55,12 @@ PYTHONPATH=src python3 -m quant_agent.cli.backtest run \
 
 # 渲染信号 JSON 产物为文本
 PYTHONPATH=src python3 -m quant_agent.cli.report show --file signals.json
+
+# 汇总 Agent 网关审计（按状态/Agent 计数 + 拒绝明细）
+PYTHONPATH=src python3 -m quant_agent.cli.agent review --audit audit.jsonl
 ```
 
-`--start/--end` 为闭区间日期过滤；`--split` 输出 `in_sample`（< split）/`out_of_sample`（≥ split）两段独立回测（FR-3.1 样本内/外划分）。
+`--start/--end` 为闭区间日期过滤；`--split` 输出 `in_sample`（< split）/`out_of_sample`（≥ split）两段独立回测；`--window N` 输出连续滚动窗口逐段回测；`--benchmark SYMBOL` 用同一份 bars 计算该标的买入持有收益并给出 `excess_return`（FR-3.1）。
 
 `--bars` 使用数据适配器的 CSV 列契约（见「数据适配器」）；`--instruments` 为 `Instrument` 字段的 JSON 数组；`--config` 提供 `initial_cash/buy_quantity/commission_rate/stamp_tax_rate/slippage_rate`，可选 `fill_model`（`slippage` 默认／`next_open` 按参考开盘价无滑点／`vwap` 按成交额÷成交量、bar 缺 `amount`/`volume` 时 fail closed；模拟盘配置 `PaperExecutionConfig` 同名字段同语义，`vwap` 在仅有点位快照的模拟盘不可用）。输出 orders/fills/summary JSON；配置错误退出码 2。
 
