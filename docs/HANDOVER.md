@@ -21,7 +21,7 @@ python3 -m ruff check src/quant_agent tests
 python3 -m mypy src/quant_agent
 ```
 
-当前基线：293 个测试全绿，覆盖率 94%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**（DuckDB 在契约套件实跑）。
+当前基线：281 个测试（280 通过；1 个 westock 真实缓存等价测试在无 cache/ 的环境跳过），覆盖率 93%，Ruff 全绿，**Mypy 0 错误并已接入 CI 阻断**（DuckDB 在契约套件实跑，westock 已真实联调）。注：此前部分提交信息中的测试计数（293/302）为推算错误，以本条为准。
 
 ## 最近完成的工作（本次会话：M7 队列 + M8 类型债务）
 
@@ -36,11 +36,15 @@ python3 -m mypy src/quant_agent
 - `20d9832` 核对差异修复 2：静态日历补 2026-02-23 春节休市（上交所公告逐日核对后唯一差异）。
 - `f76d76d` 核对差异修复 3：新股前 5 日无涨跌幅按板块注册制落地日期建模（主板 2023-02-17、创业 2020-08-24、科创 2019-07-22）。
 
+## 补：第 3 项 westock 适配器（`db8a41a`）
+
+CLI 为本机 Go 二进制 `~/.local/bin/westock`（PATH 可见，无需 `WESTOCK_CLI`）。`adapters/westock.py`：解析与 legacy 在固定夹具及真实缓存 `k_sh600176.md` 上逐字段等价（运行时不 import legacy）；`WestockMarketDataAdapter` 走 PIT 契约（抓取时刻门 + 日线收盘 bar 收盘后可见 + block 质量事件）；`CachedKlineSource` 离线读 `k_{symbol}.md`，`WestockCliKlineSource` 在线组 legacy 命令行（字节读+显式 UTF-8）。已用真实二进制联调（60 根日线，PIT 门完整）。用法见 RUNBOOK「westock 适配器」。
+
 ## 剩余 TODO
 
-1. **westock 在线适配**：等用户给出 westock CLI 路径（`WESTOCK_CLI` 或 `--westock-cli`）；解析逻辑可先离线 TDD。
-2. **2023–2025 节假日逐年复核** + **深交所规则原文逐条取文**（2026 与上交所侧已核对）。
-3. **实盘接口**：PRD 非目标；需模拟盘稳定运行与人工审批流程验收后另立评审。
+1. **2023–2025 节假日逐年复核** + **深交所规则原文逐条取文**（2026 与上交所侧已核对）。
+2. **实盘接口**：PRD 非目标；需模拟盘稳定运行与人工审批流程验收后另立评审。
+3. **第二阶段功能块**（未列入 TODO 清单的设计规划项）：后续策略插件（trend_breakout 等 3 个）、可替换成交模型、CLI 其余命令、分钟频回测/滚动窗口/基准比较、Curated 分层存储与 Feature Store、四个 Agent 角色工具集、四环境配置与部署。
 
 ## 关键文件与约束
 
