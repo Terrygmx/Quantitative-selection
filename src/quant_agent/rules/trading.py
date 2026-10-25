@@ -53,6 +53,9 @@ class MarketSnapshot:
     last: Decimal
     previous_close: Decimal
     tradable: bool = True
+    # Opposite-side volume available at a locked price board since lock;
+    # caller-supplied evidence for the execution layer's queue-fill model.
+    board_volume: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -21,6 +21,8 @@ from quant_agent.rules.trading import (
 
 
 FILL_MODELS = frozenset({"slippage", "next_open", "vwap"})
+BOARD_QUEUE_POLICIES = frozenset({"reject", "queue_fill"})
+BOARD_LOCK_CODES = frozenset({"LIMIT_UP", "LIMIT_DOWN"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,10 +101,16 @@ class ExecutionCore:
         initial_cash: Decimal,
         costs: ExecutionCosts,
         rules: TradingRulesPlugin,
+        board_queue_policy: str = "reject",
     ) -> None:
+        if board_queue_policy not in BOARD_QUEUE_POLICIES:
+            raise ValueError(
+                f"board_queue_policy must be one of {sorted(BOARD_QUEUE_POLICIES)}"
+            )
         self.cash = initial_cash
         self.costs = costs
         self.rules = rules
+        self.board_queue_policy = board_queue_policy
         self.positions: dict[str, ExecutionPosition] = {}
         self.order_states = OrderStateMachine()
 
@@ -149,8 +157,23 @@ class ExecutionCore:
         )
         rejections = self.rules.validate_order(order, portfolio, market)
         if rejections:
-            return self._reject(order, rejections[0].code)
-        price = order.limit_price
+            code = rejections[0].code
+            if code in BOARD_LOCK_CODES and self.board_queue_policy == "queue_fill":
+                # Locked-board queue model: the rules layer still adjudicates
+                # WHAT a locked board is; with opposite-side volume evidence
+                # covering the full order, the queued order fills at the
+                # board price (no partial fills - the order state machine has
+                # no partial state), otherwise it stays unfilled.
+                board_volume = market.board_volume
+                if board_volume is not None and board_volume >= order.quantity:
+                    return self._settle_fill(order, market.last)
+                if board_volume is None:
+                    return self._reject(order, code)
+                return self._reject(order, "BOARD_QUEUE_UNFILLED")
+            return self._reject(order, code)
+        return self._settle_fill(order, order.limit_price)
+
+    def _settle_fill(self, order: Order, price: Decimal) -> ExecutionOutcome:
         gross = price * order.quantity
         fee = self.costs.commission(gross)
         tax = Decimal("0") if order.side == "buy" else self.costs.stamp_tax(gross)
