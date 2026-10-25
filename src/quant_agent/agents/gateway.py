@@ -55,8 +55,23 @@ class AuditEvent:
     reason_code: str | None = None
 
 
+def _json_default(value: Any) -> Any:
+    from datetime import date as _date
+    from datetime import datetime as _datetime
+
+    if isinstance(value, (_datetime, _date)):
+        return value.isoformat()
+    raise TypeError(f"not JSON serializable: {type(value).__name__}")
+
+
 def _digest(data: Mapping[str, Any]) -> str:
-    encoded = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    encoded = json.dumps(
+        data,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=_json_default,
+    ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -86,9 +101,30 @@ def json_audit_sink(path: str):
             "reason_code": event.reason_code,
         }
         with open(path, "a", encoding="utf-8") as audit_file:
-            audit_file.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+            audit_file.write(
+                json.dumps(record, ensure_ascii=False, sort_keys=True, default=_json_default)
+                + "\n"
+            )
 
     return append
+
+
+def _tool_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """Tool arguments may carry datetimes (typed callers) or ISO strings
+    (JSON callers); ISO strings named like datetimes are converted so a
+    single toolbox serves both."""
+    from datetime import datetime as _datetime
+
+    converted: dict[str, Any] = {}
+    for key, value in arguments.items():
+        if isinstance(value, str) and ("as_of" in key or key.endswith("_at")):
+            try:
+                converted[key] = _datetime.fromisoformat(value)
+                continue
+            except ValueError:
+                pass
+        converted[key] = value
+    return converted
 
 
 def memory_audit_sink(events: list[AuditEvent]):
@@ -111,6 +147,7 @@ class AgentGateway:
         audit_sink=None,
         clock: Clock = SystemClock(),
         role_bindings: Mapping[str, "AgentRole"] | None = None,
+        tool_executors: Mapping[str, Any] | None = None,
     ):
         self.allowed_tools = set(allowed_tools)
         self.manifest = manifest
@@ -118,6 +155,7 @@ class AgentGateway:
         self.audit_sink = audit_sink
         self.clock = clock
         self.role_bindings = dict(role_bindings) if role_bindings else None
+        self.tool_executors = dict(tool_executors) if tool_executors else {}
         self.audit_events: list[AuditEvent] = []
 
     def execute(self, request: AgentRequest) -> AgentResult:
@@ -159,11 +197,33 @@ class AgentGateway:
             )
             self._audit(request, result)
             return result
+        executor = self.tool_executors.get(request.tool)
+        if executor is None:
+            result = AgentResult(
+                status="allowed",
+                agent_id=request.agent_id,
+                tool=request.tool,
+                output={**request.arguments, "mode": "read-only"},
+            )
+            self._audit(request, result)
+            return result
+        try:
+            output = executor(**_tool_arguments(request.arguments))
+        except Exception as exc:
+            result = AgentResult(
+                status="denied",
+                agent_id=request.agent_id,
+                tool=request.tool,
+                reason_code="TOOL_FAILED",
+                output={"error_type": type(exc).__name__},
+            )
+            self._audit(request, result)
+            return result
         result = AgentResult(
             status="allowed",
             agent_id=request.agent_id,
             tool=request.tool,
-            output={**request.arguments, "mode": "read-only"},
+            output=output if isinstance(output, Mapping) else {"result": output},
         )
         self._audit(request, result)
         return result
