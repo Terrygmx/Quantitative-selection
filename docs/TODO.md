@@ -10,7 +10,7 @@
 ## M2 A 股规则
 
 - [x] 交易日历已提供可替换协议、2023–2026 沪深共用静态数据与 `for_exchange` 入口；2027 及以后年份与勘误通过 `FileCalendarSource`（每行一个 ISO 日期的数据文件，`extend_builtin()` 合并内置数据，空/非法数据 fail closed）外部供给，不再猜测未发布节假日。
-- [x] 订单校验已覆盖集合竞价/午休/盘后拒绝、不同 tick 板块、涨跌停、停牌、T+1 与整手规则；盘后定价交易已覆盖科创板/创业板 15:05–15:30 时段，规则强制申报价等于当日收盘价（`INVALID_AFTER_HOURS_PRICE`），共享成交内核按收盘价无滑点定价（`ExecutionCore.order_price`）。盘中提前申报已建模：`Order.session="after_hours_fixed"` 标记的订单允许在 9:30–11:30、13:00–15:30 提交（`AFTER_HOURS_BOARD_NOT_SUPPORTED` / `OUTSIDE_AFTER_HOURS_SUBMISSION_WINDOW` 拒绝违规），撮合定价恒为收盘价；引擎侧的延迟撮合队列（盘中提交、盘后执行）尚未接入模拟执行器。已知简化：涨跌停/收盘价锁板时只有排队侧保守拒绝（涨停时买入、跌停时卖出视为无法成交），对手侧可成交；真实市场排队单还可能部分成交。仍需真实交易所规则引用适配。
+- [x] 订单校验已覆盖集合竞价/午休/盘后拒绝、不同 tick 板块、涨跌停（按买卖方向语义：排队侧拒绝、对手侧可成交）、停牌、T+1 与整手规则；盘后定价交易已覆盖科创板/创业板 15:05–15:30 时段，规则强制申报价等于当日收盘价（`INVALID_AFTER_HOURS_PRICE`），共享成交内核按收盘价无滑点定价（`ExecutionCore.order_price`）。盘中提前申报已建模：`Order.session="after_hours_fixed"` 标记的订单允许在 9:30–11:30、13:00–15:30 提交（`AFTER_HOURS_BOARD_NOT_SUPPORTED` / `OUTSIDE_AFTER_HOURS_SUBMISSION_WINDOW` 拒绝违规），撮合定价恒为收盘价；引擎侧的延迟撮合队列（盘中提交、盘后执行）尚未接入模拟执行器。规则官方引用已登记于 `rules/references.py` 并由测试锁定完整性（见 `docs/RULES_REFERENCES.md`）；所有引用 `verified_online=False`，逐年/逐条在线核对仍待联网完成。
 - [x] `MarketSnapshot` 显式模型是订单校验唯一市场入参，旧映射兼容分支已删除。
 
 ## M3 数据门户
