@@ -83,6 +83,20 @@ def fixture_inputs():
         ),
         minute=minute_points(parse_minute(read("minute_sh600176.md"))),
     )
+    # 2026-09-15 also scanned one symbol whose data fetch failed; its raw
+    # response was never preserved, so the fixture models the observable
+    # symptom (quote/daily present, minute data missing) with a synthetic
+    # symbol instead. See tests/fixtures/README.md.
+    fetch_failed = StockInput(
+        quote=QuoteSnapshot(
+            symbol="sh600000",
+            name=quote["name"],
+            previous_close=quote["prev_close"],
+            open=quote["open"],
+        ),
+        daily=stock.daily,
+        minute=(),
+    )
     index_quotes = parse_quote_batch(read("index_quote.md"))
     index_inputs = {}
     for code, key in INDEX_KEYS:
@@ -92,7 +106,7 @@ def fixture_inputs():
         )
     return TailMomentumMarket(
         date=date(2026, 9, 15),
-        stocks=(stock,),
+        stocks=(stock, fetch_failed),
         indices=index_inputs,
         breadth=parse_changedist(read("changedist.md")),
     )
@@ -151,6 +165,8 @@ def test_fixed_fixture_is_rejected_with_explicit_miss_reasons():
 
 
 def test_fixed_fixture_selection_matches_negative_golden_signal():
+    import json
+
     selection = select_tail_momentum(fixture_inputs(), snapshot="1430")
 
     assert isinstance(selection, TailMomentumSelection)
@@ -168,15 +184,16 @@ def test_fixed_fixture_selection_matches_negative_golden_signal():
         "TOTAL_BELOW_THRESHOLD",
         "AFTERNOON_MOMENTUM_BELOW_MINIMUM",
     )
-    assert selection.to_signal_document() == {
-        "date": "2026-09-15",
-        "snapshot": "1430",
-        "env_label": "Bear",
-        "env_points": 0,
-        "threshold": 80,
-        "candidates": [],
-        "excluded_count": 0,
-    }
+    # The golden run excluded one symbol whose fetch failed that day; the
+    # fixture models it as a quote with no minute data.
+    assert len(selection.excluded) == 1
+    assert selection.excluded[0].symbol == "sh600000"
+    assert selection.excluded[0].reason_code == "NO_MINUTE_DATA"
+    golden = json.loads(
+        (FIXTURES.parents[2] / "results" / "signals_2026-09-15.json")
+        .read_text(encoding="utf-8")
+    )
+    assert selection.to_signal_document() == golden
 
 
 def test_selection_emits_only_passed_candidates_as_signals():
