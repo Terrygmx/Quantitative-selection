@@ -21,15 +21,11 @@ python3 -m py_compile src/tail_momentum_selector.py $(find src/quant_agent -name
 
 结果：
 
-- `407 passed, 1 skipped`
-- 总覆盖率 `93%`
-- Ruff：`All checks passed!`
-- Mypy：`Success: no issues found in 53 source files`
-- 编译检查：通过
+- 2026-11-08 P-003/P-006 提交前复跑：`426 passed, 1 skipped`，总覆盖率 `93%`，Ruff 通过，Mypy 通过（56 个源文件），源码编译通过
 
 本次运行的唯一跳过项是 `tests/unit/data/test_westock_adapter.py` 中依赖本机真实 westock 缓存的测试。跳过取决于本机 `cache/` 是否存在，不应表述为 CI 的普遍行为。`.github/workflows/ci.yml` 运行 `python -m coverage run -m pytest`（包含 `tests/performance/`），而 `docs/RUNBOOK.md:161` 称性能基准不进入默认 CI，二者存在策略冲突，登记为 `P-014`。
 
-2026-11-08 评审使用 Python 3.11.9 隔离虚拟环境复跑。实际安装集合为 `requirements.txt`、`requirements-dev.txt`，再补装 `pytz==2026.6`、`pyarrow==26.0.1`、`pyyaml==6.0.3`。首次仅按前两个文件安装时出现 4 个可选适配器测试失败：`duckdb==2.0.0` 在该环境查询 `TIMESTAMPTZ` 时缺少 `pytz`，`pyarrow` 未声明在开发依赖中。补齐后结果为 `407 passed, 1 skipped`、`TOTAL 3565 253 93%`、Ruff `All checks passed!`、Mypy `Success: no issues found in 53 source files`、源码编译退出码 0。根因登记为 `P-014`，不混入本次文档提交。
+2026-11-08 评审使用 Python 3.11.9 隔离虚拟环境复跑。实际安装集合为 `requirements.txt`、`requirements-dev.txt`，再补装 `pytz==2026.6`、`pyarrow==26.0.1`、`pyyaml==6.0.3`。首次仅按前两个文件安装时出现 4 个可选适配器测试失败：`duckdb==2.0.0` 在该环境查询 `TIMESTAMPTZ` 时缺少 `pytz`，`pyarrow` 未声明在开发依赖中。补齐后结果为 `407 passed, 1 skipped`、`TOTAL 3565 253 93%`、Ruff `All checks passed!`、Mypy 通过、源码编译退出码 0。根因登记为 `P-014`，不混入本次文档提交。
 
 ## 2. 已完成任务
 
