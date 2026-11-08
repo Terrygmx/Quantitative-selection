@@ -54,6 +54,15 @@ class TailMomentumStrategy:
             universe=universe,
         )
 
+    def config_fingerprint(self) -> Mapping[str, object]:
+        return {
+            "universe": list(self.universe),
+            "history": self.history,
+            "indices": self.indices,
+            "breadth": self.breadth,
+            "quotes": self.quotes,
+        }
+
     def warmup(self) -> int:
         return 25
 

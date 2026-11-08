@@ -73,6 +73,16 @@ class LowVolQualityStrategy:
             liquidity_amount_yi=float(liquidity),
         )
 
+    def config_fingerprint(self) -> Mapping[str, object]:
+        return {
+            "universe": list(self.universe),
+            "vol_window": self.vol_window,
+            "vol_threshold": self.vol_threshold,
+            "trend_window": self.trend_window,
+            "holding_days": self.holding_days,
+            "liquidity_floor": self.liquidity_floor,
+        }
+
     def validate(self, config: Mapping[str, object]) -> None:
         validate_config(config, self.config_schema())
 

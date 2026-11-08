@@ -344,6 +344,14 @@ class MultiInstrumentBacktestEngine:
     def positions(self) -> dict[str, ExecutionPosition]:
         return self.core.positions
 
+    @property
+    def orders(self) -> tuple[Order, ...]:
+        return tuple(self._orders)
+
+    @property
+    def fills(self) -> tuple[FillRecord, ...]:
+        return tuple(self._fills)
+
     def run(self) -> list[MultiInstrumentEvent]:
         events: list[MultiInstrumentEvent] = []
         dates = self._ordered_dates()
@@ -354,7 +362,13 @@ class MultiInstrumentBacktestEngine:
                 bar = next((item for item in self.bars[symbol] if item["date"] == day), None)
                 if bar is None:
                     continue
-                event = self._trade_symbol(symbol, bar, session_open)
+                raw_timestamp = bar.get("timestamp")
+                trade_timestamp = (
+                    raw_timestamp
+                    if isinstance(raw_timestamp, datetime)
+                    else session_open
+                )
+                event = self._trade_symbol(symbol, bar, trade_timestamp)
                 events.extend(event)
             events.append(MultiInstrumentEvent("SESSION_CLOSE", session_open))
             self.core.settle()
@@ -379,7 +393,10 @@ class MultiInstrumentBacktestEngine:
         return base
 
     def _trade_symbol(
-        self, symbol: str, bar: Mapping[str, object], timestamp: datetime
+        self,
+        symbol: str,
+        bar: Mapping[str, object],
+        timestamp: datetime,
     ) -> list[MultiInstrumentEvent]:
         instrument = self.instruments[symbol]
         raw_board_volume = bar.get("board_volume")

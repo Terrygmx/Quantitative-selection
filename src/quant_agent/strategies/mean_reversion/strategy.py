@@ -62,6 +62,14 @@ class MeanReversionStrategy:
             holding_days=holding,
         )
 
+    def config_fingerprint(self) -> Mapping[str, object]:
+        return {
+            "universe": list(self.universe),
+            "deviation_threshold": self.deviation_threshold,
+            "liquidity_floor": self.liquidity_floor,
+            "holding_days": self.holding_days,
+        }
+
     def validate(self, config: Mapping[str, object]) -> None:
         validate_config(config, self.config_schema())
 

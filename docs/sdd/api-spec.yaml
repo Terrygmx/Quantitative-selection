@@ -3,7 +3,7 @@
 # service. It defines CLI operations, Python protocols, configs and artifacts.
 contract:
   name: quant-agent
-  version: "1.0.7"
+  version: "1.0.8"
   status: implemented-baseline-and-evolving
   updated_at: "2026-11-08"
   reviewed_at: "2026-11-08"
@@ -16,7 +16,6 @@ contract:
   non_scope:
     - "HTTP or RPC service"
     - "Live broker execution"
-    - "Automatic strategy-to-backtest orchestration (tracked as P-001)"
     - "Automatic strategy-to-paper orchestration (tracked as P-002)"
 
 conventions:
@@ -53,7 +52,7 @@ entrypoints:
       exit_codes: [0, 1, 2]
 
     backtest.run:
-      summary: "Run the deterministic daily, minute or grid backtest engine."
+      summary: "Run the deterministic daily, minute, grid or strategy-driven backtest."
       invocation:
         - "python3"
         - "-m"
@@ -73,7 +72,12 @@ entrypoints:
         - name: "--config"
           type: path
           required: true
-          description: "JSON BacktestCostConfig."
+          description: "JSON BacktestCostConfig or StrategyBacktestConfig when --mode strategy."
+        - name: "--mode"
+          type: enum
+          values: [engine, strategy]
+          default: engine
+          description: "Engine mode runs historical bars; strategy mode runs one PIT decision."
         - name: "--frequency"
           type: enum
           values: [daily, minute]
@@ -111,13 +115,21 @@ entrypoints:
           type: integer
           default: 0
           description: "Positive grid step count enables grid mode."
+        - name: "--as-of"
+          type: string
+          description: "Timezone-aware ISO-8601 decision time; required for strategy mode."
       constraints:
         - "Minute mode rejects --start/--end/--split/--window."
         - "--split and --window are mutually exclusive."
         - "--split must be after --start and on/before --end when those bounds are supplied."
+        - "Strategy mode requires --as-of and rejects --frequency, --decision, --start, --end, --split, --window, --benchmark and grid arguments."
+        - "Strategy mode config must include a non-empty strategies array, a strategy_configs entry for every strategy id, and industry_by_symbol; instrument symbols must cover every accepted target."
+        - "CSV strategy mode supports trend_breakout, mean_reversion_liquid, low_vol_quality and industry_rotation; tail_momentum_overnight requires the Python API fixture inputs and fails closed in CLI mode."
       stdout:
         media_type: "application/json"
-        schema_ref: "#/components/schemas/BacktestEnvelope"
+        oneOf:
+          - $ref: "#/components/schemas/BacktestEnvelope"
+          - $ref: "#/components/schemas/StrategyBacktestOutput"
       side_effects: []
       exit_codes: [0, 1, 2]
 
@@ -312,8 +324,10 @@ entrypoints:
         symbol: "Strategy"
         attributes:
           metadata: "StrategyMetadata"
-        method: "on_snapshot(context: Any) -> Sequence[object]"
-        contract: "Current protocol annotation is object-valued; concrete plugins return Signal lists. Reading only context.as_of-visible data is the platform invariant."
+        methods:
+          - "on_snapshot(context: StrategyContext) -> Sequence[Signal]"
+          - "config_fingerprint() -> Mapping[str, object]"
+        contract: "Strategy mode passes a PIT-bound, read-recording MarketDataPort; requests after the run as_of fail closed. config_fingerprint declares behavior-affecting configuration without runtime caches. Registry registration requires both methods."
       SignalAdapter:
         module: "quant_agent.application.portfolio"
         symbol: "SignalAdapter"
@@ -367,6 +381,8 @@ artifacts:
 config_contracts:
   BacktestCostConfig:
     schema_ref: "#/components/schemas/BacktestCostConfig"
+  StrategyBacktestConfig:
+    schema_ref: "#/components/schemas/StrategyBacktestConfig"
   PaperStrategyConfig:
     schema_ref: "#/components/schemas/PaperStrategyConfig"
   EnvironmentConfig:
@@ -426,6 +442,14 @@ components:
     DecimalString:
       type: string
       pattern: "^-?[0-9]+(\\.[0-9]+)?$"
+
+    PositiveDecimalString:
+      type: string
+      pattern: "^(?:[0-9]*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$"
+
+    NonNegativeDecimalString:
+      type: string
+      pattern: "^[0-9]+(?:\\.[0-9]+)?$"
 
     Instrument:
       type: object
@@ -794,7 +818,7 @@ components:
       required: [initial_cash]
       properties:
         initial_cash:
-          $ref: "#/components/schemas/DecimalString"
+          $ref: "#/components/schemas/PositiveDecimalString"
         buy_quantity:
           type: integer
           minimum: 1
@@ -1017,6 +1041,77 @@ components:
               type: string
             return:
               type: number
+
+    StrategyBacktestConfig:
+      type: object
+      additionalProperties: false
+      required: [initial_cash, buy_quantity, strategies, strategy_configs, industry_by_symbol]
+      properties:
+        initial_cash:
+          $ref: "#/components/schemas/PositiveDecimalString"
+        buy_quantity:
+          type: integer
+          minimum: 1
+        commission_rate:
+          $ref: "#/components/schemas/NonNegativeDecimalString"
+        stamp_tax_rate:
+          $ref: "#/components/schemas/NonNegativeDecimalString"
+        slippage_rate:
+          $ref: "#/components/schemas/NonNegativeDecimalString"
+        fill_model:
+          type: string
+          enum: [slippage, next_open, vwap]
+        strategies:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+        strategy_configs:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: true
+        industry_by_symbol:
+          type: object
+          additionalProperties:
+            type: string
+            minLength: 1
+        previous_close_by_symbol:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/PositiveDecimalString"
+
+    StrategyBacktestOutput:
+      type: object
+      additionalProperties: false
+      required: [manifest, signals, decisions, targets, orders, fills, summary]
+      properties:
+        manifest:
+          $ref: "#/components/schemas/RunManifest"
+        signals:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComposerSignal"
+        decisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/RiskDecision"
+        targets:
+          type: array
+          items:
+            $ref: "#/components/schemas/TargetPosition"
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestOrder"
+        fills:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestFill"
+        summary:
+          $ref: "#/components/schemas/BacktestSummary"
 
     BacktestEnvelope:
       oneOf:

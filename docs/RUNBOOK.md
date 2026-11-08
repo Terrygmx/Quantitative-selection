@@ -53,6 +53,11 @@ PYTHONPATH=src python3 -m quant_agent.cli.backtest run \
   --bars bars.csv --instruments instruments.json --config costs.json \
   [--exchange SSE] [--start 2026-01-01] [--end 2026-06-30] [--split 2026-04-01]
 
+# 策略驱动回测：一个显式 PIT 决策时刻，CSV 提供所有可见 bars
+PYTHONPATH=src python3 -m quant_agent.cli.backtest run \
+  --mode strategy --bars bars.csv --instruments instruments.json \
+  --config strategy-backtest.json --as-of 2026-09-15T14:30:00+08:00
+
 # 渲染信号 JSON 产物为文本
 PYTHONPATH=src python3 -m quant_agent.cli.report show --file signals.json
 
@@ -67,6 +72,25 @@ PYTHONPATH=src python3 -m quant_agent.cli.agent review --audit audit.jsonl
 **分钟频模式**（FR-3.1）：`--frequency minute --decision HHMM`（默认 1431，尾盘动量快照语义）。每个交易日按决策时刻取**不晚于该时刻的最后一根分钟 bar** 定价（晚于决策时刻的 bar 由 PIT 构造保证不可见），经共享成交内核与规则校验（分钟级时间戳会真实命中午休/时段/盘后定价窗口）；当日决策前无 bar 的标的跳过。CSV 的 `available_at` 必须等于 bar 时间戳（事件时间可见性）方可重放；`--start/--end/--split/--window` 为日频专用，与分钟模式互斥。
 
 `--bars` 使用数据适配器的 CSV 列契约（见「数据适配器」）；`--instruments` 为 `Instrument` 字段的 JSON 数组；`--config` 提供 `initial_cash/buy_quantity/commission_rate/stamp_tax_rate/slippage_rate`，可选 `fill_model`（`slippage` 默认／`next_open` 按参考开盘价无滑点／`vwap` 按成交额÷成交量、bar 缺 `amount`/`volume` 时 fail closed；模拟盘配置 `PaperExecutionConfig` 同名字段同语义，`vwap` 在仅有点位快照的模拟盘不可用）。输出 orders/fills/summary JSON；配置错误退出码 2。
+
+**策略模式**（`--mode strategy`）：`--as-of` 必须是带时区的 ISO-8601 时间，并会归一化到 `Asia/Shanghai`；策略只能读取该时刻可见的 bars。配置示例：
+
+```json
+{
+  "initial_cash": "100000.00",
+  "buy_quantity": 100,
+  "commission_rate": "0.0003",
+  "stamp_tax_rate": "0.0005",
+  "slippage_rate": "0.001",
+  "strategies": ["trend_breakout"],
+  "strategy_configs": {
+    "trend_breakout": {"universe": ["sh600519"]}
+  },
+  "industry_by_symbol": {"sh600519": "Technology"}
+}
+```
+
+策略模式输出 `manifest/signals/decisions/targets/orders/fills/summary`。`industry_by_symbol` 只用于显式补充插件未携带的行业，不能替代 `SignalAdapter` 的 fail-closed 校验；缺少 accepted target 的 instrument 元数据、插件非 `Signal` 输出或插件崩溃都会退出码 2。CSV 策略模式支持 `trend_breakout`、`mean_reversion_liquid`、`low_vol_quality`、`industry_rotation`；`tail_momentum_overnight` 需要额外日线历史、指数分钟线、涨跌分布和报价快照，当前通过 Python API 固定金样验证，CLI 会显式拒绝而不是返回空信号。
 
 ## 模拟盘命令
 

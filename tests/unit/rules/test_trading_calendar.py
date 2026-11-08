@@ -119,6 +119,9 @@ def test_calendar_protocol_is_replaceable():
         def previous_trading_day(self, day):
             return None
 
+        def calendar_fingerprint(self):
+            return "weekday"
+
     from quant_agent.rules.trading import TradingRulesPlugin
 
     plugin = TradingRulesPlugin(WeekdayCalendar())

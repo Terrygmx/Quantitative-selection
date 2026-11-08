@@ -62,6 +62,14 @@ class IndustryRotationStrategy:
             holding_days=holding,
         )
 
+    def config_fingerprint(self) -> Mapping[str, object]:
+        return {
+            "industry_universe": dict(self.industry_universe),
+            "momentum_window": self.momentum_window,
+            "top_n": self.top_n,
+            "holding_days": self.holding_days,
+        }
+
     def validate(self, config: Mapping[str, object]) -> None:
         validate_config(config, self.config_schema())
 

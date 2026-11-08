@@ -52,6 +52,13 @@ class TrendBreakoutStrategy:
             trend_window=trend,
         )
 
+    def config_fingerprint(self) -> Mapping[str, object]:
+        return {
+            "universe": list(self.universe),
+            "breakout_window": self.breakout_window,
+            "trend_window": self.trend_window,
+        }
+
     def validate(self, config: Mapping[str, object]) -> None:
         validate_config(config, self.config_schema())
 

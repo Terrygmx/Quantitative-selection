@@ -45,6 +45,12 @@ def test_registry_supports_enable_disable_and_version_rollback():
                 turnover_cap=0.3, risk_exposure="market_neutral",
             )
 
+        def on_snapshot(self, context):
+            return []
+
+        def config_fingerprint(self):
+            return {"version": self.metadata.version}
+
     registry = StrategyRegistry()
     registry.register(Versioned("1.0.0"))
     registry.register(Versioned("1.1.0"))
@@ -73,3 +79,20 @@ def test_registry_supports_enable_disable_and_version_rollback():
 
     with pytest.raises(KeyError):
         registry.rollback("roll", "9.9.9")
+
+
+def test_registry_rejects_strategies_without_required_methods(registry):
+    class Incomplete:
+        metadata = StrategyMetadata("incomplete", "1.0", "daily")
+
+    with pytest.raises(ValueError, match="on_snapshot"):
+        registry.register(Incomplete())
+
+    class MissingFingerprint:
+        metadata = StrategyMetadata("missing-fingerprint", "1.0", "daily")
+
+        def on_snapshot(self, context):
+            return []
+
+    with pytest.raises(ValueError, match="config_fingerprint"):
+        registry.register(MissingFingerprint())

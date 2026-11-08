@@ -11,6 +11,9 @@ class GoodStrategy:
     def on_snapshot(self, context):
         return ["signal"]
 
+    def config_fingerprint(self):
+        return {"strategy_id": "good"}
+
 
 class ExplodingStrategy:
     from quant_agent.strategies.registry import StrategyMetadata
@@ -19,6 +22,9 @@ class ExplodingStrategy:
 
     def on_snapshot(self, context):
         raise RuntimeError("boom")
+
+    def config_fingerprint(self):
+        return {"strategy_id": "bad"}
 
 
 def test_registry_isolates_failing_plugins_and_audits_failure():

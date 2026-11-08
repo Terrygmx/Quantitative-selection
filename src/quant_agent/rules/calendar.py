@@ -25,6 +25,7 @@ def parse_trading_days(lines: Iterable[str]) -> frozenset[date]:
 
 
 class TradingCalendar(Protocol):
+    def calendar_fingerprint(self) -> object: ...
     def is_trading_day(self, day: date) -> bool: ...
 
     def next_trading_day(self, day: date) -> date | None: ...
@@ -35,6 +36,16 @@ class TradingCalendar(Protocol):
 class StaticTradingCalendar:
     def __init__(self, trading_days: Iterable[date]):
         self._days = frozenset(trading_days)
+
+    @property
+    def days(self) -> frozenset[date]:
+        return self._days
+
+    def calendar_fingerprint(self) -> object:
+        return (
+            f"{type(self).__module__}.{type(self).__qualname__}",
+            tuple(sorted(self._days)),
+        )
 
     def is_trading_day(self, day: date) -> bool:
         return day in self._days

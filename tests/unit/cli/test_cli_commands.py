@@ -5,9 +5,16 @@ exit 2 with `error: ...` on stderr for bad configuration."""
 
 import csv
 import json
-from datetime import date, datetime, timezone
+import warnings
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
+import yaml
+from jsonschema import Draft202012Validator
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    from jsonschema import RefResolver
 
 from quant_agent.cli.backtest import main as backtest_main
 from quant_agent.cli.strategy import main as strategy_main
@@ -28,6 +35,305 @@ def test_strategy_list_prints_registered_plugins(capsys):
         "version": "0.1.0",
         "frequency": "intraday",
     } in out
+
+
+def test_backtest_strategy_mode_returns_strategy_audit_trail(tmp_path, capsys):
+    bars_path = tmp_path / "bars.csv"
+    instruments_path = tmp_path / "instruments.json"
+    config_path = tmp_path / "strategy.json"
+    symbol = "sh600519"
+    write_strategy_bars_csv(bars_path, symbol)
+    write_json(instruments_path, [
+        {
+            "symbol": symbol,
+            "exchange": "SSE",
+            "board": "MainBoard",
+            "status": "Active",
+            "listing_date": "2010-01-01",
+            "tick": "0.01",
+            "lot_size": 100,
+        }
+    ])
+    write_json(config_path, {
+        "initial_cash": "100000.00",
+        "buy_quantity": 100,
+        "strategies": ["trend_breakout"],
+        "strategy_configs": {"trend_breakout": {"universe": [symbol]}},
+        "industry_by_symbol": {symbol: "Technology"},
+    })
+
+    exit_code = backtest_main([
+        "run",
+        "--mode", "strategy",
+        "--bars", str(bars_path),
+        "--instruments", str(instruments_path),
+        "--config", str(config_path),
+        "--as-of", "2026-09-15T14:30:00+08:00",
+    ])
+
+    assert exit_code == 0
+    report = json.loads(capsys.readouterr().out)
+    assert set(report) == {
+        "manifest", "signals", "decisions", "targets",
+        "orders", "fills", "summary",
+    }
+    assert report["signals"][0]["symbol"] == symbol
+    assert report["orders"][0]["status"] == "FILLED"
+    assert report["fills"][0]["quantity"] == 100
+    assert report["summary"]["fill_count"] == 1
+
+
+def test_backtest_strategy_mode_requires_as_of(backtest_inputs, capsys):
+    bars, instruments, config = backtest_inputs
+
+    exit_code = backtest_main([
+        "run",
+        "--mode", "strategy",
+        "--bars", str(bars),
+        "--instruments", str(instruments),
+        "--config", str(config),
+    ])
+
+    assert exit_code == 2
+    assert "error: --as-of is required" in capsys.readouterr().err
+
+
+def test_backtest_engine_mode_rejects_as_of(backtest_inputs, capsys):
+    bars, instruments, config = backtest_inputs
+
+    exit_code = backtest_main([
+        "run",
+        "--bars", str(bars),
+        "--instruments", str(instruments),
+        "--config", str(config),
+        "--as-of", "2026-09-15T14:30:00+08:00",
+    ])
+
+    assert exit_code == 2
+    assert "--as-of is only valid" in capsys.readouterr().err
+
+
+def test_backtest_strategy_mode_rejects_tail_momentum_without_intraday_config(
+    tmp_path, capsys
+):
+    bars_path = tmp_path / "bars.csv"
+    instruments_path = tmp_path / "instruments.json"
+    config_path = tmp_path / "strategy.json"
+    symbol = "sh600519"
+    write_bars_csv(bars_path)
+    write_json(instruments_path, [
+        {
+            "symbol": symbol,
+            "exchange": "SSE",
+            "board": "MainBoard",
+            "status": "Active",
+            "listing_date": "2010-01-01",
+            "tick": "0.01",
+            "lot_size": 100,
+        }
+    ])
+    write_json(config_path, {
+        "initial_cash": "100000.00",
+        "buy_quantity": 100,
+        "strategies": ["tail_momentum_overnight"],
+        "strategy_configs": {"tail_momentum_overnight": {"universe": [symbol]}},
+        "industry_by_symbol": {symbol: "Technology"},
+    })
+
+    exit_code = backtest_main([
+        "run",
+        "--mode", "strategy",
+        "--bars", str(bars_path),
+        "--instruments", str(instruments_path),
+        "--config", str(config_path),
+        "--as-of", "2026-09-15T14:30:00+08:00",
+    ])
+
+    assert exit_code == 2
+    assert "unsupported strategy ids" in capsys.readouterr().err
+
+
+def test_backtest_strategy_mode_rejects_explicit_engine_defaults(tmp_path, capsys):
+    bars_path = tmp_path / "bars.csv"
+    instruments_path = tmp_path / "instruments.json"
+    config_path = tmp_path / "strategy.json"
+    symbol = "sh600519"
+    write_strategy_bars_csv(bars_path, symbol)
+    write_json(instruments_path, [
+        {
+            "symbol": symbol,
+            "exchange": "SSE",
+            "board": "MainBoard",
+            "status": "Active",
+            "listing_date": "2010-01-01",
+            "tick": "0.01",
+            "lot_size": 100,
+        }
+    ])
+    write_json(config_path, {
+        "initial_cash": "100000.00",
+        "buy_quantity": 100,
+        "strategies": ["trend_breakout"],
+        "strategy_configs": {"trend_breakout": {"universe": [symbol]}},
+        "industry_by_symbol": {symbol: "Technology"},
+    })
+
+    exit_code = backtest_main([
+        "run",
+        "--mode", "strategy",
+        "--bars", str(bars_path),
+        "--instruments", str(instruments_path),
+        "--config", str(config_path),
+        "--as-of", "2026-09-15T14:30:00+08:00",
+        "--frequency", "daily",
+    ])
+
+    assert exit_code == 2
+    assert "strategy mode rejects --frequency" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"buy_quantity": True}, "buy_quantity must be a positive integer"),
+        (
+            {"previous_close_by_symbol": {"sh600519": "NaN"}},
+            "previous_close_by_symbol.sh600519 must be finite",
+        ),
+        (
+            {"strategy_configs": {"trend_breakout": "not-an-object"}},
+            "strategy_configs entries must be objects",
+        ),
+    ],
+)
+def test_backtest_strategy_config_contract_rejects_invalid_values(
+    tmp_path, capsys, overrides, message
+):
+    bars, instruments, config = write_strategy_mode_inputs(tmp_path, overrides)
+
+    exit_code = backtest_main([
+        "run",
+        "--mode", "strategy",
+        "--bars", str(bars),
+        "--instruments", str(instruments),
+        "--config", str(config),
+        "--as-of", "2026-09-15T14:30:00+08:00",
+    ])
+
+    assert exit_code == 2
+    assert message in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"initial_cash": "NaN"}, "initial_cash must be finite"),
+        ({"initial_cash": "0"}, "initial_cash must be greater than 0"),
+        ({"initial_cash": "-1"}, "initial_cash must be greater than 0"),
+        ({"commission_rate": "-0.1"}, "commission_rate must be at least 0"),
+        ({"initial_cash": 100000}, "initial_cash must be a decimal string"),
+        (
+            {"previous_close_by_symbol": {"sh600519": 10}},
+            "previous_close_by_symbol.sh600519 must be a decimal string",
+        ),
+    ],
+)
+def test_backtest_strategy_config_rejects_invalid_decimals(
+    tmp_path, capsys, overrides, message
+):
+    bars, instruments, config = write_strategy_mode_inputs(tmp_path, overrides)
+
+    exit_code = backtest_main([
+        "run",
+        "--mode", "strategy",
+        "--bars", str(bars),
+        "--instruments", str(instruments),
+        "--config", str(config),
+        "--as-of", "2026-09-15T14:30:00+08:00",
+    ])
+
+    assert exit_code == 2
+    assert message in capsys.readouterr().err
+
+
+def test_strategy_backtest_config_schema_requires_positive_cash():
+    root = yaml.safe_load(open("docs/sdd/api-spec.yaml", encoding="utf-8"))
+    schema = root["components"]["schemas"]["StrategyBacktestConfig"]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        validator = Draft202012Validator(
+            schema,
+            resolver=RefResolver.from_schema(root),
+        )
+    base = {
+        "initial_cash": "100000.00",
+        "buy_quantity": 100,
+        "strategies": ["trend_breakout"],
+        "strategy_configs": {"trend_breakout": {"universe": ["X"]}},
+        "industry_by_symbol": {"X": "Technology"},
+    }
+
+    for value in ("0", "-1", "NaN", 100000):
+        payload = {**base, "initial_cash": value}
+        assert not validator.is_valid(payload)
+
+
+def write_strategy_bars_csv(path, symbol):
+    closes = [9.0 + index * 0.05 for index in range(40)] + [11.5]
+    market_tz = timezone(timedelta(hours=8))
+    cutoff = datetime(2026, 9, 15, 9, 31, tzinfo=market_tz)
+    rows = []
+    for offset, close in enumerate(reversed(closes)):
+        stamp = cutoff - timedelta(days=offset)
+        rows.append(
+            {
+                "instrument": symbol,
+                "timestamp": stamp.isoformat(),
+                "open": close,
+                "high": close,
+                "low": close,
+                "close": close,
+                "volume": 1_000_000.0,
+                "amount": close * 1_000_000,
+                "available_at": stamp.isoformat(),
+            }
+        )
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def write_strategy_mode_inputs(tmp_path, overrides=None):
+    symbol = "sh600519"
+    bars_path = tmp_path / "bars.csv"
+    instruments_path = tmp_path / "instruments.json"
+    config_path = tmp_path / "strategy.json"
+    write_strategy_bars_csv(bars_path, symbol)
+    write_json(
+        instruments_path,
+        [
+            {
+                "symbol": symbol,
+                "exchange": "SSE",
+                "board": "MainBoard",
+                "status": "Active",
+                "listing_date": "2010-01-01",
+                "tick": "0.01",
+                "lot_size": 100,
+            }
+        ],
+    )
+    payload = {
+        "initial_cash": "100000.00",
+        "buy_quantity": 100,
+        "strategies": ["trend_breakout"],
+        "strategy_configs": {"trend_breakout": {"universe": [symbol]}},
+        "industry_by_symbol": {symbol: "Technology"},
+    }
+    payload.update(overrides or {})
+    write_json(config_path, payload)
+    return bars_path, instruments_path, config_path
 
 
 def write_bars_csv(path):

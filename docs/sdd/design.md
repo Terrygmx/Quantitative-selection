@@ -1,8 +1,8 @@
 # A 股多策略 Agent 量化平台：系统设计
 
-> 文档版本：1.0.7
+> 文档版本：1.0.8
 > 基线日期：2026-10-29
-> 对应提案：`docs/sdd/proposal.md` 1.0.5
+> 对应提案：`docs/sdd/proposal.md` 1.0.8
 > 最后复核：2026-11-08
 > 状态：已实现基线与目标边界并存；每个“当前实现”与“后续演进”均显式标注。
 
@@ -205,11 +205,13 @@ class Strategy(Protocol):
     metadata: StrategyMetadata
 
     def on_snapshot(self, context: StrategyContext) -> Sequence[Signal]: ...
+    def config_fingerprint(self) -> Mapping[str, object]: ...
 ```
 
 当前插件还必须提供：
 
 - `from_config(config)`：配置解析与 Schema 校验。
+- `config_fingerprint()`：返回影响信号行为的稳定配置，不包含运行时缓存、计数或上次选择结果。
 - `warmup()`：最少历史窗口。
 - 失败时抛出明确异常，由注册表隔离为 `PLUGIN_CRASH`。
 
@@ -250,13 +252,18 @@ costs.json ──► BacktestConfig
          orders + fills + summary JSON
 ```
 
-当前 `backtest run` 是引擎级回测 CLI：
+`backtest run` 提供两种互斥模式：
 
-- 日频引擎按交易日推进，多标的在每个交易日产生买入订单。
-- 分钟频引擎在每个交易日取不晚于 `--decision HHMM` 的最后一根 bar。
-- 网格引擎在低高价之间驻留限价单。
-- `--split`、`--window`、`--benchmark` 提供实验切分和比较。
-- CLI 尚未读取策略插件，因此不能把当前命令描述为“策略插件端到端回测”。
+- 默认 `engine` 模式保持既有日频、分钟频、网格引擎行为，按交易日或决策时刻推进。
+- `--mode strategy` 使用 `StrategyBacktestOrchestrator`：显式 `--as-of` 先归一化到 `Asia/Shanghai` 构造 PIT 上下文，按配置中的策略 id 调用注册表，经 `SignalAdapter`、`SignalComposer` 得到目标，再由 `MultiInstrumentBacktestEngine` 执行被接受目标。
+- 策略运行收到的数据端口绑定本次 `as_of`：请求晚于决策时刻会 fail closed，所有实际读取（包括 manifest 未列出的工具读取）都进入 `data_snapshot`。
+- 策略模式只为被接受目标在最新可见 bar 上产生一笔固定数量买入；订单和成交时间戳为该次决策的 `as_of`，成交基准价使用同一可见 bar 的收盘价，最终估值也使用同一价格；数量由 `BacktestConfig.buy_quantity` 决定，目标权重用于组合决策而不直接换算股数。
+- 价格带前收优先取显式 `previous_close_by_symbol`，否则取前一交易日最后一根可见 bar；两者都缺失时 fail closed，避免把上一分钟价格误作前收。
+- 策略模式可为不含 `industry` evidence 的插件提供显式 `industry_by_symbol` 映射；未提供时 `INDUSTRY_MISSING` 保持 fail closed。
+- `config_hash` 绑定规范化 `as_of`、成本配置、组合约束、策略 id/版本、策略配置指纹、instrument 元数据和规则日历；`data_snapshot` 绑定该时点所有实际读取的 bars。集合类型按稳定顺序序列化，插件通过 `config_fingerprint()` 明确声明行为配置，不序列化运行时缓存或计数。
+- 策略模式输出 `RunManifest`、适配后信号、适配/组合决策、目标、订单、成交和指标；插件崩溃、非 `Signal` 输出或目标缺可见 bar 都会中止执行。
+- `--start`、`--end`、`--split`、`--window`、`--benchmark` 和网格参数属于 `engine` 模式，策略模式拒绝这些参数，避免混合语义。
+- CSV 配置驱动的策略模式支持 `trend_breakout`、`mean_reversion_liquid`、`low_vol_quality`、`industry_rotation`。`tail_momentum_overnight` 需要日线历史、指数分钟线、涨跌分布和报价快照，当前只通过 Python API 与固定金样夹具验证；CLI 对该 id 显式 fail closed，不静默返回空信号。
 
 ### 5.4 模拟盘
 
@@ -566,7 +573,6 @@ model_id, arguments_sha256, arguments, output, reason_code
 
 | 编号 | 差距 | 影响 | 对应任务 |
 |---|---|---|---|
-| G-01 | 策略插件未接入回测 CLI | 无法端到端验证策略收益 | P-001 |
 | G-02 | 策略插件未接入模拟盘 | 模拟盘只验证成交通道 | P-002 |
 | G-04 | 质量事件未接入生产管线 | `block` 尚未自动阻断实际运行 | P-004 |
 | G-05 | RunManifest/审计未强制写产物 | 运行级追溯不完整 | P-005 |
@@ -577,6 +583,8 @@ model_id, arguments_sha256, arguments, output, reason_code
 | G-11 | 旧 HTML 看板未转义供应商动态文本 | 不可信内容可注入结果页 | P-016 |
 | G-12 | 注入式模拟执行器订单字段未归一化 | CLI 产物结构随执行器变化 | P-015 |
 | G-13 | 审批账本覆写且无并发保护 | 审计历史与并发写入不可保证 | P-017 |
+
+G-01 已由 P-001 关闭：策略回测编排器和 `backtest run --mode strategy` 已交付，端到端证据见 `docs/sdd/task.md`。
 
 ## 13. 验证矩阵
 

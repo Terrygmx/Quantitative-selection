@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import TYPE_CHECKING, Callable, Mapping, Protocol
+
+from quant_agent.domain.models import Signal
+
+if TYPE_CHECKING:
+    from quant_agent.strategies.context import StrategyContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +28,9 @@ class Strategy(Protocol):
 
     metadata: StrategyMetadata
 
-    def on_snapshot(self, context: Any) -> Sequence[object]: ...
+    def on_snapshot(self, context: "StrategyContext") -> Sequence[Signal]: ...
+
+    def config_fingerprint(self) -> Mapping[str, object]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +42,7 @@ class PluginFailure:
 
 @dataclass(frozen=True, slots=True)
 class PluginRunResult:
-    signals: tuple[object, ...]
+    signals: tuple[Signal, ...]
     failures: tuple[PluginFailure, ...]
 
 
@@ -49,6 +56,10 @@ class StrategyRegistry:
         metadata = getattr(strategy, "metadata", None)
         if metadata is None or not getattr(metadata, "strategy_id", ""):
             raise ValueError("strategy metadata with strategy_id is required")
+        if not callable(getattr(strategy, "on_snapshot", None)):
+            raise ValueError("strategy must implement on_snapshot()")
+        if not callable(getattr(strategy, "config_fingerprint", None)):
+            raise ValueError("strategy must implement config_fingerprint()")
         strategy_id = metadata.strategy_id
         if strategy_id in self._strategies and (
             self._strategies[strategy_id].metadata.version
@@ -101,11 +112,39 @@ class StrategyRegistry:
         if not self._enabled:
             raise ValueError("all strategies are disabled")
 
-        signals: list[object] = []
+        signals: list[Signal] = []
         failures = []
         for strategy_id, strategy in self._strategies.items():
             if strategy_id not in self._enabled:
                 continue
+            try:
+                signals.extend(strategy.on_snapshot(context))
+            except Exception as exc:
+                failure = PluginFailure(
+                    strategy_id=strategy_id,
+                    reason_code="PLUGIN_CRASH",
+                    message=str(exc),
+                )
+                failures.append(failure)
+                if on_failure is not None:
+                    on_failure(failure)
+        return PluginRunResult(signals=tuple(signals), failures=tuple(failures))
+
+    def run_selected(
+        self,
+        strategy_ids: Sequence[str],
+        context,
+        on_failure: Callable[[PluginFailure], None] | None = None,
+    ) -> PluginRunResult:
+        selected = tuple(strategy_ids)
+        if not selected:
+            raise ValueError("No strategies selected")
+        signals: list[Signal] = []
+        failures: list[PluginFailure] = []
+        for strategy_id in selected:
+            strategy = self.get(strategy_id)
+            if strategy_id not in self._enabled:
+                raise ValueError(f"strategy is disabled: {strategy_id}")
             try:
                 signals.extend(strategy.on_snapshot(context))
             except Exception as exc:

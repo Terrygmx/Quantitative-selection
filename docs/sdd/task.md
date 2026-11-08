@@ -1,6 +1,6 @@
 # A 股多策略 Agent 量化平台：任务清单
 
-> 文档版本：1.0.7
+> 文档版本：1.0.8
 > 基线日期：2026-10-29
 > 基线提交：`7052b7e`
 > 最后复核：2026-11-08
@@ -215,28 +215,35 @@ python3 -m py_compile src/tail_momentum_selector.py $(find src/quant_agent -name
 - 验收标准（SC-11、AC-11）：YAML 解析成功；引用的 `components.schemas` 均存在；文档中 `P-*` 任务均有定义；CLI 参数与当前 `build_parser()` 对齐。
 - 状态：`[x]`
 - 证据：
-  - Python `yaml` 唯一键解析 + `$ref` 扫描：`schemas=27 refs=33 distinct_targets=10 missing=0`
-  - `jsonschema.Draft202012Validator.check_schema`：27 个 Schema 语法全部通过
-  - 关键产物样例：`StrategyList`、`ApprovalLedger`、`BacktestEnvelope`、`PaperRunOutput`（完整与精简订单）、`AgentReviewOutput`、`AuditEvent`（含 `output=null` 的拒绝事件）、`LegacySignalArtifact` 均通过
+  - Python `yaml` 唯一键解析 + `$ref` 扫描：`schemas=36 refs=51 distinct_targets=18 missing=0`
+  - `jsonschema.Draft202012Validator.check_schema`：36 个 Schema 语法全部通过
+  - 关键产物样例：`StrategyList`、`ApprovalLedger`、`BacktestEnvelope`、`StrategyBacktestOutput`、`PaperRunOutput`（完整与精简订单）、`AgentReviewOutput`、`AuditEvent`（含 `output=null` 的拒绝事件）、`LegacySignalArtifact` 均通过
   - 任务编号扫描：`P tasks defined=17 referenced=17 missing=0`
-  - CLI 参数按 `src/quant_agent/cli/` 五个模块的 `build_parser()` 对齐；数值均排除 `-h/--help`：`strategy.list=0`、`backtest.run=14`、`report.show=1`、`agent.review=1`、`paper.approve=4`（含全局 `--approvals`）、`paper.run=4`（含全局 `--approvals` 与 `--dry-run`）
-
-## 3. 待完成任务
-
-以下任务是当前架构差距，不代表现有能力失效。未完成前不得在提案或对外说明中宣称对应端到端能力已交付。
+  - CLI 参数按 `src/quant_agent/cli/` 五个模块的 `build_parser()` 对齐；数值均排除 `-h/--help`：`strategy.list=0`、`backtest.run=16`（P-001 新增 `--mode`/`--as-of`）、`report.show=1`、`agent.review=1`、`paper.approve=4`（含全局 `--approvals`）、`paper.run=4`（含全局 `--approvals` 与 `--dry-run`）
 
 ### P-001 策略插件接入回测
 
 - 依赖：T-060、T-070、T-080、P-003
+- 状态：`[x]`
 - 目标：新增一个确定性的策略回测编排器，读取策略配置和 PIT 数据，生成 `Signal`，经组合层转为目标，再由回测引擎生成订单和成交。
-- 验收标准：
-  1. 固定夹具上，同一配置产生可重复的信号序列。
-  2. 信号只使用 `as_of` 可见数据。
-  3. 订单经过 `TradingRulesPlugin` 和 `ExecutionCore`。
-  4. 输出包含 `RunManifest`、信号摘要、目标仓位、订单、成交和指标。
-  5. 至少覆盖尾盘动量与一个日频策略的端到端测试。
-- 状态：`[ ]`
-- 预计影响：`src/quant_agent/application/`、`src/quant_agent/cli/backtest.py`、测试夹具、`docs/sdd/api-spec.yaml`
+- 验收标准与证据：
+  1. 固定夹具上同一配置产生可重复信号序列：`tests/unit/application/test_strategy_backtest_orchestrator.py` 的可复现性、时区等价和配置哈希测试。
+  2. 信号只使用 `as_of` 可见数据：`StrategyContext`、PIT 端口和未来 bar 夹具；决策时间归一化为 `Asia/Shanghai`。
+  3. 订单经过 `TradingRulesPlugin` 和 `ExecutionCore`：`MultiInstrumentBacktestEngine`；14:30 订单时间戳、真实前收和 `PRICE_BAND` 拒绝均有测试。
+  4. 输出包含 `RunManifest`、信号摘要、目标仓位、订单、成交和指标：`StrategyBacktestOutput` 契约与 CLI 测试。
+  5. 至少覆盖尾盘动量与一个日频策略的端到端测试：尾盘金样、趋势突破和行业轮动测试。
+- 证据路径：
+  - `src/quant_agent/application/strategy_backtest.py`
+  - `src/quant_agent/cli/backtest.py`
+  - `src/quant_agent/strategies/registry.py`
+  - `tests/unit/application/test_strategy_backtest_orchestrator.py`
+  - `tests/unit/cli/test_cli_commands.py`
+  - 只读 Senior Code Reviewer 复核：Critical/Important/Minor 均为 0，结论 `Ready to merge: Yes`。
+  - 本次验证：`462 passed, 1 skipped`，覆盖率 `93%`，Ruff/Mypy/源码编译通过；YAML 唯一键解析、36 个 Schema 语法与 51 处 `$ref` 目标通过。
+
+## 3. 待完成任务
+
+以下任务是当前架构差距，不代表现有能力失效。未完成前不得在提案或对外说明中宣称对应端到端能力已交付。
 
 ### P-002 策略插件接入模拟盘
 
@@ -442,7 +449,7 @@ python3 -m py_compile src/tail_momentum_selector.py $(find src/quant_agent -name
 | T-070～T-080 | SC-05～SC-06、AC-05～AC-06 | 插件契约、组合风控、ADR-001 | `StrategyList`、`Signal`、组合原因码 | registry/portfolio 测试 |
 | T-090～T-100 | SC-07～SC-08、AC-07～AC-08 | Agent 边界、模拟盘、ADR-005 | `AuditEvent`、`paper.*`、Agent 错误码 | Agent/Paper CLI 测试 |
 | T-110～T-130 | SC-09～SC-10、AC-09～AC-10 | 报告安全、四环境、质量闸门 | `AgentReviewOutput`、HTML 契约、`EnvironmentConfig` | reporting/config/CI 证据 |
-| P-001 | SC-01～SC-04、AC-01～AC-04 | G-01、ADR-002/003/007 | 端到端回测契约（待新增） | 各任务完成后回写 |
+| P-001 | SC-01～SC-04、AC-01～AC-04 | G-01、ADR-002/003/007 | `backtest.run --mode strategy`、`StrategyBacktestConfig`、`StrategyBacktestOutput` | 编排器、CLI、尾盘金样与质量闸门 |
 | P-002 | SC-08、AC-08 | G-02、ADR-005/007 | `paper.run` 扩展契约 | 各任务完成后回写 |
 | P-003 | SC-06、AC-06 | 插件契约 | `SignalAdapter`、`ComposerSignal`、`SignalAdapterResult`、`TargetPosition`、`CompositionResult` | `tests/unit/portfolio/test_signal_adapter.py` |
 | P-004 | SC-01、AC-01 | G-04、质量门 | `QualityEvent` 管线契约 | 各任务完成后回写 |
@@ -516,5 +523,6 @@ P-012 ← P-001, P-002, P-003, P-004, P-005, P-006, P-007, P-008, P-009, P-010, 
 | 2026-11-08 | 1.0.5 | 按第三轮评审统一 per-command 退出码、G-10 映射与测试路径 |
 | 2026-11-08 | 1.0.6 | 完成 P-003：Signal 适配、有效期/行业 fail closed、策略追溯、类型化 ComposerSignal 与评审修正 |
 | 2026-11-08 | 1.0.7 | 完成 P-006：提取 ports 包并消除 adapter 边界例外 |
+| 2026-11-08 | 1.0.8 | 完成 P-001：策略插件接入回测编排器与 CLI，补齐端到端契约和证据 |
 
 > 研究产物，不构成任何投资建议或个股推荐。投资有风险，决策需谨慎。

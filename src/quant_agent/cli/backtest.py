@@ -7,9 +7,9 @@ import argparse
 import json
 import sys
 from datetime import date, datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, DecimalException
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, cast
 
 from quant_agent.adapters.market_data import CsvMarketDataPort
 from quant_agent.application.backtest import (
@@ -19,9 +19,26 @@ from quant_agent.application.backtest import (
 from quant_agent.application.grid import GridBacktestEngine, GridConfig
 from quant_agent.application.intraday import MinuteBacktestEngine
 from quant_agent.application.metrics import BacktestMetrics
+from quant_agent.application.strategy_backtest import (
+    CN_MARKET_TZ,
+    StrategyBacktestOrchestrator,
+)
 from quant_agent.domain.models import Instrument
 from quant_agent.rules.calendar import StaticTradingCalendar
 from quant_agent.rules.trading import TradingRulesPlugin
+from quant_agent.strategies.industry_rotation.strategy import IndustryRotationStrategy
+from quant_agent.strategies.low_vol_quality.strategy import LowVolQualityStrategy
+from quant_agent.strategies.mean_reversion.strategy import MeanReversionStrategy
+from quant_agent.strategies.registry import Strategy, StrategyRegistry
+from quant_agent.strategies.trend_breakout.strategy import TrendBreakoutStrategy
+
+
+STRATEGY_FACTORIES = {
+    "trend_breakout": TrendBreakoutStrategy.from_config,
+    "mean_reversion_liquid": MeanReversionStrategy.from_config,
+    "low_vol_quality": LowVolQualityStrategy.from_config,
+    "industry_rotation": IndustryRotationStrategy.from_config,
+}
 
 
 def _load_json(path: Path) -> object:
@@ -32,10 +49,30 @@ def _load_json(path: Path) -> object:
 
 
 def _decimal(value: object, field: str) -> Decimal:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a decimal string")
     try:
-        return Decimal(str(value))
-    except (InvalidOperation, ValueError) as exc:
+        result = Decimal(value)
+    except DecimalException as exc:
         raise ValueError(f"{field} must be a decimal string") from exc
+    if not result.is_finite():
+        raise ValueError(f"{field} must be finite")
+    return result
+
+
+def _bounded_decimal(
+    value: object,
+    field: str,
+    *,
+    minimum: Decimal,
+    allow_zero: bool,
+) -> Decimal:
+    result = _decimal(value, field)
+    valid = result >= minimum if allow_zero else result > minimum
+    if not valid:
+        relation = "at least" if allow_zero else "greater than"
+        raise ValueError(f"{field} must be {relation} {minimum}")
+    return result
 
 
 def _bars_for_engine(
@@ -81,6 +118,20 @@ def _iso_date(value: str, field: str) -> date:
 
 
 def _run(args: argparse.Namespace) -> dict[str, object]:
+    if args.mode == "strategy":
+        return _run_strategy(args)
+    if args.as_of is not None:
+        raise ValueError("--as-of is only valid with --mode strategy")
+    args.frequency = args.frequency or "daily"
+    args.decision = args.decision or "1431"
+    args.window = args.window or 0
+    args.grid_steps = args.grid_steps or 0
+    args.start = args.start or ""
+    args.end = args.end or ""
+    args.split = args.split or ""
+    args.benchmark = args.benchmark or ""
+    args.grid_low = args.grid_low or ""
+    args.grid_high = args.grid_high or ""
     start = _iso_date(args.start, "--start") if args.start else None
     end = _iso_date(args.end, "--end") if args.end else None
     split = _iso_date(args.split, "--split") if args.split else None
@@ -149,19 +200,33 @@ def _load_instruments(args: argparse.Namespace) -> dict[str, Instrument]:
 
 def _backtest_config(config_data: Mapping[str, object]) -> BacktestConfig:
     buy_quantity = config_data.get("buy_quantity", 100)
-    if not isinstance(buy_quantity, int):
-        raise ValueError("buy_quantity must be an integer")
+    if type(buy_quantity) is not int or buy_quantity <= 0:
+        raise ValueError("buy_quantity must be a positive integer")
     return BacktestConfig(
-        initial_cash=_decimal(config_data.get("initial_cash"), "initial_cash"),
+        initial_cash=_bounded_decimal(
+            config_data.get("initial_cash"),
+            "initial_cash",
+            minimum=Decimal("0"),
+            allow_zero=False,
+        ),
         buy_quantity=buy_quantity,
-        commission_rate=_decimal(
-            config_data.get("commission_rate", "0.0003"), "commission_rate"
+        commission_rate=_bounded_decimal(
+            config_data.get("commission_rate", "0.0003"),
+            "commission_rate",
+            minimum=Decimal("0"),
+            allow_zero=True,
         ),
-        stamp_tax_rate=_decimal(
-            config_data.get("stamp_tax_rate", "0.0005"), "stamp_tax_rate"
+        stamp_tax_rate=_bounded_decimal(
+            config_data.get("stamp_tax_rate", "0.0005"),
+            "stamp_tax_rate",
+            minimum=Decimal("0"),
+            allow_zero=True,
         ),
-        slippage_rate=_decimal(
-            config_data.get("slippage_rate", "0.001"), "slippage_rate"
+        slippage_rate=_bounded_decimal(
+            config_data.get("slippage_rate", "0.001"),
+            "slippage_rate",
+            minimum=Decimal("0"),
+            allow_zero=True,
         ),
         fill_model=str(config_data.get("fill_model", "slippage")),
     )
@@ -214,13 +279,24 @@ def _run_grid(args: argparse.Namespace) -> dict[str, object]:
         port=CsvMarketDataPort(args.bars),
         instruments=_load_instruments(args),
         config=GridConfig(
-            initial_cash=_decimal(config_data.get("initial_cash"), "initial_cash"),
-            buy_quantity=_backtest_config(config_data).buy_quantity,
-            commission_rate=_decimal(
-                config_data.get("commission_rate", "0.0003"), "commission_rate"
+            initial_cash=_bounded_decimal(
+                config_data.get("initial_cash"),
+                "initial_cash",
+                minimum=Decimal("0"),
+                allow_zero=False,
             ),
-            stamp_tax_rate=_decimal(
-                config_data.get("stamp_tax_rate", "0.0005"), "stamp_tax_rate"
+            buy_quantity=_backtest_config(config_data).buy_quantity,
+            commission_rate=_bounded_decimal(
+                config_data.get("commission_rate", "0.0003"),
+                "commission_rate",
+                minimum=Decimal("0"),
+                allow_zero=True,
+            ),
+            stamp_tax_rate=_bounded_decimal(
+                config_data.get("stamp_tax_rate", "0.0005"),
+                "stamp_tax_rate",
+                minimum=Decimal("0"),
+                allow_zero=True,
             ),
         ),
         rules=TradingRulesPlugin(
@@ -349,6 +425,159 @@ def engine_summary(summary: object) -> dict[str, float | int]:
     return summary
 
 
+def _strategy_registry(
+    config_data: Mapping[str, object],
+) -> tuple[
+    StrategyRegistry,
+    tuple[str, ...],
+    Mapping[str, Mapping[str, object]],
+]:
+    raw_ids = config_data.get("strategies")
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise ValueError("strategies must be a non-empty array")
+    if not all(isinstance(item, str) and item.strip() for item in raw_ids):
+        raise ValueError("strategies must contain non-empty strings")
+    strategy_ids = tuple(raw_ids)
+    if len(set(strategy_ids)) != len(strategy_ids):
+        raise ValueError("strategies must not contain duplicates")
+    unknown = [item for item in strategy_ids if item not in STRATEGY_FACTORIES]
+    if unknown:
+        raise ValueError(
+            "unsupported strategy ids for CSV strategy mode: " + ", ".join(unknown)
+        )
+    raw_configs = config_data.get("strategy_configs")
+    if not isinstance(raw_configs, Mapping):
+        raise ValueError("strategy_configs must be an object")
+    invalid_configs = [
+        str(strategy_id)
+        for strategy_id, strategy_config in raw_configs.items()
+        if not isinstance(strategy_config, Mapping)
+    ]
+    if invalid_configs:
+        raise ValueError(
+            "strategy_configs entries must be objects: "
+            + ", ".join(sorted(invalid_configs))
+        )
+    configs = cast(Mapping[str, Mapping[str, object]], raw_configs)
+    missing_configs = [
+        strategy_id for strategy_id in strategy_ids if strategy_id not in raw_configs
+    ]
+    if missing_configs:
+        raise ValueError(
+            "strategy_configs is missing: " + ", ".join(missing_configs)
+        )
+    registry = StrategyRegistry()
+    for strategy_id in strategy_ids:
+        plugin_config = configs[strategy_id]
+        if not isinstance(plugin_config, Mapping):
+            raise ValueError(f"strategy_configs.{strategy_id} must be an object")
+        try:
+            strategy = STRATEGY_FACTORIES[strategy_id](dict(plugin_config))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"invalid config for strategy {strategy_id}: {exc}"
+            ) from exc
+        registry.register(cast(Strategy, strategy))
+    return registry, strategy_ids, configs
+
+
+def _run_strategy(args: argparse.Namespace) -> dict[str, object]:
+    if args.as_of is None:
+        raise ValueError("--as-of is required for strategy mode")
+    engine_only = {
+        "--frequency": args.frequency is not None,
+        "--decision": args.decision is not None,
+        "--start": args.start is not None,
+        "--end": args.end is not None,
+        "--split": args.split is not None,
+        "--window": args.window is not None,
+        "--benchmark": args.benchmark is not None,
+        "--grid-low": args.grid_low is not None,
+        "--grid-high": args.grid_high is not None,
+        "--grid-steps": args.grid_steps is not None,
+    }
+    used = [name for name, supplied in engine_only.items() if supplied]
+    if used:
+        raise ValueError("strategy mode rejects " + ", ".join(used))
+    try:
+        as_of = datetime.fromisoformat(str(args.as_of))
+    except ValueError as exc:
+        raise ValueError("--as-of must be a timezone-aware ISO-8601 datetime") from exc
+    if as_of.tzinfo is None:
+        raise ValueError("--as-of must be a timezone-aware ISO-8601 datetime")
+    as_of = as_of.astimezone(CN_MARKET_TZ)
+    config_data = _load_json(args.config)
+    if not isinstance(config_data, Mapping):
+        raise ValueError("strategy backtest config must be a JSON object")
+    allowed_keys = {
+        "initial_cash",
+        "buy_quantity",
+        "commission_rate",
+        "stamp_tax_rate",
+        "slippage_rate",
+        "fill_model",
+        "strategies",
+        "strategy_configs",
+        "industry_by_symbol",
+        "previous_close_by_symbol",
+    }
+    unknown_keys = sorted(set(config_data) - allowed_keys)
+    if unknown_keys:
+        raise ValueError(
+            "unknown strategy backtest config keys: " + ", ".join(unknown_keys)
+        )
+    if "industry_by_symbol" not in config_data:
+        raise ValueError("industry_by_symbol is required")
+    if "buy_quantity" not in config_data:
+        raise ValueError("buy_quantity is required")
+    industry_by_symbol = config_data["industry_by_symbol"]
+    if not isinstance(industry_by_symbol, Mapping):
+        raise ValueError("industry_by_symbol must be an object")
+    if not all(
+        isinstance(symbol, str)
+        and symbol
+        and isinstance(industry, str)
+        and industry.strip()
+        for symbol, industry in industry_by_symbol.items()
+    ):
+        raise ValueError("industry_by_symbol keys and values must be non-empty strings")
+    previous_close_by_symbol = config_data.get("previous_close_by_symbol", {})
+    if not isinstance(previous_close_by_symbol, Mapping):
+        raise ValueError("previous_close_by_symbol must be an object")
+    previous_close_by_symbol = {
+        str(symbol): _bounded_decimal(
+            value,
+            f"previous_close_by_symbol.{symbol}",
+            minimum=Decimal("0"),
+            allow_zero=False,
+        )
+        for symbol, value in previous_close_by_symbol.items()
+    }
+    registry, strategy_ids, strategy_configs = _strategy_registry(config_data)
+    orchestrator = StrategyBacktestOrchestrator(
+        port=CsvMarketDataPort(args.bars),
+        instruments=_load_instruments(args),
+        config=_backtest_config(config_data),
+        rules=TradingRulesPlugin(
+            StaticTradingCalendar.for_exchange(str(args.exchange))
+        ),
+        registry=registry,
+        strategy_ids=strategy_ids,
+        as_of=as_of,
+        decision_time=as_of.strftime("%H%M"),
+        strategy_configs={
+            str(strategy_id): dict(config)
+            for strategy_id, config in strategy_configs.items()
+        },
+        previous_close_by_symbol=previous_close_by_symbol,
+        industry_by_symbol={
+            symbol: industry
+            for symbol, industry in industry_by_symbol.items()
+        },
+    )
+    return orchestrator.run()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="quant-agent backtest",
@@ -360,20 +589,20 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--frequency",
         choices=["daily", "minute"],
-        default="daily",
+        default=None,
         help="bar frequency of the CSV file",
     )
     run.add_argument(
         "--decision",
-        default="1431",
+        default=None,
         help="minute-frequency decision time HHMM (default 1431)",
     )
-    run.add_argument("--grid-low", default="", help="grid strategy: lowest grid level")
-    run.add_argument("--grid-high", default="", help="grid strategy: highest grid level")
+    run.add_argument("--grid-low", default=None, help="grid strategy: lowest grid level")
+    run.add_argument("--grid-high", default=None, help="grid strategy: highest grid level")
     run.add_argument(
         "--grid-steps",
         type=int,
-        default=0,
+        default=None,
         help="grid strategy: number of price bands between low and high",
     )
     run.add_argument(
@@ -381,25 +610,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--config", type=Path, required=True, help="JSON cost config")
     run.add_argument(
+        "--mode",
+        choices=["engine", "strategy"],
+        default="engine",
+        help="engine runs historical bars; strategy runs one PIT decision",
+    )
+    run.add_argument(
         "--exchange", default="SSE", help="calendar exchange (SSE or SZSE)"
     )
-    run.add_argument("--start", default="", help="ISO date bound (inclusive)")
-    run.add_argument("--end", default="", help="ISO date bound (inclusive)")
+    run.add_argument("--start", default=None, help="ISO date bound (inclusive)")
+    run.add_argument("--end", default=None, help="ISO date bound (inclusive)")
     run.add_argument(
         "--split",
-        default="",
+        default=None,
         help="ISO date splitting in-sample (< split) from out-of-sample (>= split)",
     )
     run.add_argument(
         "--window",
         type=int,
-        default=0,
+        default=None,
         help="run consecutive rolling windows of this many trading days",
     )
     run.add_argument(
         "--benchmark",
-        default="",
+        default=None,
         help="symbol from the bar file to compare buy-and-hold returns against",
+    )
+    run.add_argument(
+        "--as-of",
+        default=None,
+        help="timezone-aware ISO-8601 decision time for strategy mode",
     )
     return parser
 
@@ -408,7 +648,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         report = _run(args)
-    except ValueError as exc:
+    except (ArithmeticError, KeyError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(report, ensure_ascii=False, sort_keys=True))
