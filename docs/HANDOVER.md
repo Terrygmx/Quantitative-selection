@@ -1,7 +1,7 @@
 # 工作交接（Handover）
 
 > 面向接手协作或继续开发的 agent。本文档自包含：读完即可按约定开工，无需 archaeology。
-> 更新时间：2026-10-25。HEAD `0648baa`，分支 `feat/followup-integration`（领先 main 18 个提交，main 领先远端约 109 个），工作树干净。
+> 更新时间：2026-11-08。分支 `feat/followup-integration`；P-001 已推送，P-002 已完成代码/两轮评审闭环，等待提交与推送。
 
 ## 1. 项目一句话
 
@@ -12,9 +12,9 @@ A 股多策略量化研究平台：策略以插件接入，经 PIT（Point-in-Ti
 ## 2. 当前状态（全部验证通过）
 
 ```bash
-python3 -m pytest --ignore=tests/performance   # 407 passed, 1 skipped
+python3 -m pytest --ignore=tests/performance   # 514 passed, 1 skipped
 python3 -m coverage run -m pytest --ignore=tests/performance
-python3 -m coverage report --fail-under=90     # 93%
+python3 -m coverage report --fail-under=90     # 92%
 python3 -m ruff check src/quant_agent tests    # clean
 python3 -m mypy src/quant_agent                # 0 errors（CI 阻断）
 python3 -m pytest tests/performance            # 日频基准，单独跑
@@ -71,7 +71,7 @@ cli/           paper / strategy / backtest / report / agent 五入口
 2. **成交账本只有一份**（ExecutionCore）：新增执行路径必须走它；冻结的 `BacktestEngine` 例外（金样回归夹具）。
 3. **PIT 防未来由构造保证**：数据按 `as_of` 查询、`available_at >= timestamp` 不变量；日频收盘 bar 收盘后才可见；网格/分钟引擎的决策只用当前 bar 及之前。
 4. **fail closed**：配置缺失/数据缺失/非法输入一律报错拒绝（退出码 2），绝不静默放行或猜测。
-5. `universe` 必填；审批账本 `state/paper-approvals.json` 与 `config_hash` 绑定不可绕过；**prod 恒 dry-run**。
+5. paper 配置的 `strategy_config/data/instruments/market` 必填；approve/run 必须使用同一显式 `--as-of`，审批绑定策略版本、完整运行身份和实际 PIT snapshot；**prod 恒 dry-run**。
 6. 引用诚实原则：`rules/references.py` 的 `verified_online=False` 必须附注；产物带免责声明。
 
 ## 6. 实盘非目标的锁定方式

@@ -94,42 +94,80 @@ PYTHONPATH=src python3 -m quant_agent.cli.agent review --audit audit.jsonl
 
 ## 模拟盘命令
 
-模拟盘只接受已保存审批的策略配置。审批文件默认位于 `state/paper-approvals.json`，记录策略 ID、配置哈希和批准人；配置内容本身必须包含相同的 `config_hash`。
+模拟盘先调用策略插件，再经 `SignalAdapter`、`SignalComposer` 和执行层。审批文件默认位于 `state/paper-approvals.json`，记录策略 ID、策略版本、完整运行身份哈希、本次实际 PIT 读取快照和批准人。`approve` 与 `run` 都必须提供同一个显式 `--as-of`；时间会归一化到 `Asia/Shanghai`。
 
 ```bash
-# 先检查及批准配置
+# 批准固定时点的策略配置
 PYTHONPATH=src python3 -m quant_agent.cli.paper \
   --approvals state/paper-approvals.json approve \
-  --strategy tail_momentum_overnight \
-  --config configs/tail_momentum.json \
-  --approved-by operator
+  --strategy trend_breakout \
+  --config configs/paper-trend.json \
+  --approved-by operator \
+  --as-of 2026-10-26T14:45:00+08:00
 
-# 默认 dry-run：只返回空订单计划
+# dry-run：仍返回 manifest/signals/decisions/targets，但订单为空
 PYTHONPATH=src python3 -m quant_agent.cli.paper \
   --approvals state/paper-approvals.json run \
-  --strategy tail_momentum_overnight \
-  --config configs/tail_momentum.json --dry-run
+  --strategy trend_breakout \
+  --config configs/paper-trend.json \
+  --as-of 2026-10-26T14:45:00+08:00 \
+  --dry-run
 
-# 非 dry-run：必须由调用方注入执行器，否则 fail closed
+# 非 dry-run：默认从 execution 段构造模拟执行器
 PYTHONPATH=src python3 -m quant_agent.cli.paper \
   --approvals state/paper-approvals.json run \
-  --strategy tail_momentum_overnight \
-  --config configs/tail_momentum.json
+  --strategy trend_breakout \
+  --config configs/paper-trend.json \
+  --as-of 2026-10-26T14:45:00+08:00
 ```
 
-`PaperGateway.run(dry_run=False)` 只有在构造时注入 `PaperExecution` 才会执行。非 dry-run 且未注入执行器时，CLI 会从配置的 `execution` 段构造 `SimulatedPaperExecution`；缺少该段则 fail closed，以免在没有交易通道和运行清单的情况下误发订单。退出码 `0` 表示成功，`2` 表示审批、配置或执行器错误。
+`run` 的默认行为不是 dry-run，必须显式传入 `--dry-run`。非 dry-run 在任何结果返回前都要求执行器；CLI 缺少 `execution` 段时 fail closed。退出码 `0` 表示成功，`2` 表示审批、配置、PIT、执行或契约错误。`tail_momentum_overnight` CLI 目前因缺少完整历史/指数分钟线/报价水合而显式拒绝，不能作为示例配置。
 
 ### 默认模拟成交配置
 
-非 dry-run 时配置需提供 `execution` 段，以及每个 `universe` 标的的 `market` 快照：
+配置需要 `strategy_config`、`data.bars`、`instruments` 和 `market`；`execution` 在非 dry-run 时必填。`config_hash` 可选，仅用于断言调用方预期值与 CLI 计算值一致。以下示例省略其余 bar，实际文件至少包含策略 warmup 所需数据：
 
 ```json
 {
-  "config_hash": "hash-1",
-  "universe": ["sh600176"],
-  "market": {
-    "sh600176": { "last": "10.05", "previous_close": "10.00", "tradable": true }
+  "strategy_config": {
+    "universe": ["sh600176"],
+    "breakout_window": 20,
+    "trend_window": 20
   },
+  "data": {
+    "bars": [
+      {
+        "instrument": "sh600176",
+        "timestamp": "2026-10-26T14:30:00+08:00",
+        "available_at": "2026-10-26T14:30:00+08:00",
+        "open": 11.2,
+        "high": 11.5,
+        "low": 11.1,
+        "close": 11.5,
+        "volume": 1000000,
+        "amount": 11500000
+      }
+    ]
+  },
+  "instruments": [
+    {
+      "symbol": "sh600176",
+      "exchange": "SSE",
+      "board": "MainBoard",
+      "status": "Active",
+      "listing_date": "2010-01-01",
+      "tick": "0.01",
+      "lot_size": 100
+    }
+  ],
+  "market": {
+    "sh600176": {
+      "last": "11.50",
+      "previous_close": "11.00",
+      "tradable": true
+    }
+  },
+  "industry_by_symbol": {"sh600176": "Technology"},
   "execution": {
     "exchange": "SSE",
     "initial_cash": "100000.00",
@@ -137,22 +175,14 @@ PYTHONPATH=src python3 -m quant_agent.cli.paper \
     "stamp_tax_rate": "0.0005",
     "slippage_rate": "0.001",
     "buy_quantity": 100,
-    "instruments": [
-      {
-        "symbol": "sh600176",
-        "exchange": "SSE",
-        "board": "MainBoard",
-        "status": "Active",
-        "listing_date": "2010-01-01",
-        "tick": "0.01",
-        "lot_size": 100
-      }
-    ]
-  }
+    "fill_model": "slippage",
+    "board_queue_policy": "reject"
+  },
+  "session": "continuous"
 }
 ```
 
-模拟成交复用 `TradingRulesPlugin` 与订单状态机：非交易时段、停牌、涨跌停、非整手与 T+1 未结算卖出都会被拒绝并记录原因码；买入按滑点后价格并量化到最小价位，卖出额外计入印花税。只有配置 `universe` 内的标的会成为下单目标，`market` 中的额外标的只作为参考数据。
+`fill_model` 支持 `slippage`、`next_open` 和 `vwap`；模拟盘快照没有 open/reference 字段，因此 `next_open` 以 `market.last` 为基准且不加滑点；`vwap` 要求 market 快照同时提供正数 `amount` 与 `volume`，否则 fail closed。`board_queue_policy` 支持 `reject` 和 `queue_fill`。模拟成交复用 `TradingRulesPlugin` 与订单状态机：非交易时段、停牌、涨跌停、非整手与 T+1 未结算卖出都会被拒绝并记录原因码；买入按配置的成交模型定价并量化到最小价位，卖出额外计入印花税。只有策略经组合风控后 accepted/reduced 的正权重标的会成为下单目标，`market` 中的额外标的只作为参考数据。`last` 与 `previous_close` 必须是正的 decimal string，`tradable` 必须是布尔；缺失前收时可显式提供顶层 `previous_close_by_symbol`，否则 fail closed。
 
 ### 涨跌停排队成交
 

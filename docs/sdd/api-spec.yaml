@@ -3,7 +3,7 @@
 # service. It defines CLI operations, Python protocols, configs and artifacts.
 contract:
   name: quant-agent
-  version: "1.0.8"
+  version: "1.0.10"
   status: implemented-baseline-and-evolving
   updated_at: "2026-11-08"
   reviewed_at: "2026-11-08"
@@ -16,7 +16,6 @@ contract:
   non_scope:
     - "HTTP or RPC service"
     - "Live broker execution"
-    - "Automatic strategy-to-paper orchestration (tracked as P-002)"
 
 conventions:
   encoding: "UTF-8"
@@ -175,7 +174,7 @@ entrypoints:
       exit_codes: [0, 1, 2]
 
     paper.approve:
-      summary: "Persist a strategy/config-hash approval in the append-or-replace ledger."
+      summary: "Persist a strategy version/config/data-snapshot-bound approval in the append-or-replace ledger."
       invocation:
         - "python3"
         - "-m"
@@ -197,19 +196,25 @@ entrypoints:
         - name: "--config"
           type: path
           required: true
-          description: "JSON strategy config containing config_hash."
+          description: "JSON paper config. The command computes config_hash, strategy_version and data_snapshot from the config, registry and data artifact."
         - name: "--approved-by"
           type: string
           required: true
+        - name: "--as-of"
+          type: string
+          format: date-time
+          required: true
+          description: "Explicit PIT decision time. Must match the approved data reads."
       stdout:
         media_type: "application/json"
         schema_ref: "#/components/schemas/ApprovalRecord"
       side_effects:
         - "Rewrites the whole approval ledger with Path.write_text after de-duplicating (strategy_id, config_hash); no lock, temp-file replace or append-only history."
+        - "Computes and stores strategy_version, the full run identity hash and the actual PIT read snapshot; a caller-provided config_hash must equal the computed value."
       exit_codes: [0, 1, 2]
 
     paper.run:
-      summary: "Run a previously approved configuration in dry-run or simulated mode."
+      summary: "Run a strategy plugin through composition and risk, then dry-run or simulate accepted targets."
       invocation:
         - "python3"
         - "-m"
@@ -235,15 +240,24 @@ entrypoints:
           type: boolean
           default: false
           description: "When present, returns an empty order plan after approval checks."
+        - name: "--as-of"
+          type: string
+          format: date-time
+          required: true
+          description: "Explicit PIT decision time. Must match the approved data reads."
       preconditions:
-        - "The (strategy_id, config_hash) pair exists in the approval ledger."
+        - "Config contains strategy_config, data.bars, instruments and market snapshots."
+        - "Every configured strategy is known, enabled and constructs from strategy_config."
+        - "The approval matches strategy_id, strategy_version, the full config hash and the actual PIT read snapshot."
         - "Non-dry-run either receives an injected executor or supplies an execution config."
-        - "Every universe symbol has a market snapshot; execution instruments have metadata."
+        - "Every accepted target has instrument metadata and a market snapshot; execution instruments have metadata."
       stdout:
         media_type: "application/json"
         schema_ref: "#/components/schemas/PaperRunOutput"
       side_effects:
-        - "Non-dry-run updates simulated cash and positions through ExecutionCore."
+        - "Every run reads a PIT-bound market data port and emits manifest/signals/decisions/targets audit evidence."
+        - "Dry-run returns the same strategy audit evidence with an empty orders array."
+        - "Non-dry-run executes only accepted/reduced positive targets and updates cash/positions through ExecutionCore."
         - "After-hours intents may be queued in the simulated executor."
       exit_codes: [0, 1, 2]
 
@@ -472,7 +486,7 @@ components:
           type: string
           format: date
         tick:
-          $ref: "#/components/schemas/DecimalString"
+          $ref: "#/components/schemas/PositiveDecimalString"
         lot_size:
           type: integer
           minimum: 1
@@ -783,14 +797,23 @@ components:
     ApprovalRecord:
       type: object
       additionalProperties: false
-      required: [strategy_id, config_hash, approved_by]
+      required: [strategy_id, strategy_version, config_hash, data_snapshot, approved_by]
       properties:
         strategy_id:
           type: string
+          minLength: 1
+        strategy_version:
+          type: string
+          minLength: 1
         config_hash:
           type: string
+          minLength: 1
+        data_snapshot:
+          type: string
+          minLength: 1
         approved_by:
           type: string
+          minLength: 1
 
     ApprovalLedger:
       type: array
@@ -839,61 +862,96 @@ components:
 
     PaperStrategyConfig:
       type: object
-      additionalProperties: true
-      required: [config_hash, universe]
+      additionalProperties: false
+      required: [strategy_config, data, market, instruments]
       properties:
         config_hash:
           type: string
           minLength: 1
-        universe:
-          type: array
-          minItems: 1
-          items:
-            type: string
-        session:
-          type: string
-          enum: [continuous, after_hours_fixed]
-          default: continuous
+          description: "Optional caller-supplied assertion; must equal the computed config hash."
+        strategy_config:
+          type: object
+          additionalProperties: true
+        data:
+          type: object
+          additionalProperties: false
+          required: [bars]
+          properties:
+            bars:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/Bar"
         market:
           type: object
+          minProperties: 1
           additionalProperties:
             type: object
+            additionalProperties: true
+            required: [last]
             properties:
               last:
-                $ref: "#/components/schemas/DecimalString"
+                $ref: "#/components/schemas/PositiveDecimalString"
               previous_close:
-                $ref: "#/components/schemas/DecimalString"
+                $ref: "#/components/schemas/PositiveDecimalString"
               tradable:
                 type: boolean
               board_volume:
-                $ref: "#/components/schemas/DecimalString"
+                $ref: "#/components/schemas/NonNegativeDecimalString"
+              amount:
+                $ref: "#/components/schemas/PositiveDecimalString"
+              volume:
+                $ref: "#/components/schemas/PositiveDecimalString"
+        instruments:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Instrument"
+        industry_by_symbol:
+          type: object
+          additionalProperties:
+            type: string
+            minLength: 1
+        previous_close_by_symbol:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/PositiveDecimalString"
         execution:
           type: object
+          additionalProperties: false
           properties:
             exchange:
               type: string
               enum: [SSE, SZSE]
               default: SSE
             initial_cash:
-              $ref: "#/components/schemas/DecimalString"
+              $ref: "#/components/schemas/PositiveDecimalString"
               default: "100000.00"
             commission_rate:
-              $ref: "#/components/schemas/DecimalString"
+              $ref: "#/components/schemas/NonNegativeDecimalString"
               default: "0.0003"
             stamp_tax_rate:
-              $ref: "#/components/schemas/DecimalString"
+              $ref: "#/components/schemas/NonNegativeDecimalString"
               default: "0.0005"
             slippage_rate:
-              $ref: "#/components/schemas/DecimalString"
+              $ref: "#/components/schemas/NonNegativeDecimalString"
               default: "0.001"
             buy_quantity:
               type: integer
+              minimum: 1
               default: 100
-            instruments:
-              type: array
-              minItems: 1
-              items:
-                $ref: "#/components/schemas/Instrument"
+            fill_model:
+              type: string
+              enum: [slippage, next_open, vwap]
+              default: slippage
+            board_queue_policy:
+              type: string
+              enum: [reject, queue_fill]
+              default: reject
+        session:
+          type: string
+          enum: [continuous, after_hours_fixed]
+          default: continuous
 
     EnvironmentConfig:
       type: object
@@ -1192,15 +1250,36 @@ components:
     PaperRunOutput:
       type: object
       additionalProperties: false
-      required: [strategy_id, config_hash, status, orders]
+      required:
+        [strategy_id, strategy_version, config_hash, data_snapshot, read_snapshot, status, manifest, signals, decisions, targets, orders]
       properties:
         strategy_id:
           type: string
+        strategy_version:
+          type: string
         config_hash:
+          type: string
+        data_snapshot:
+          type: string
+        read_snapshot:
           type: string
         status:
           type: string
-          enum: [DRY_RUN, PAPER_EXECUTED]
+          enum: [DRY_RUN, NO_SIGNAL, PAPER_EXECUTED]
+        manifest:
+          $ref: "#/components/schemas/RunManifest"
+        signals:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComposerSignal"
+        decisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/RiskDecision"
+        targets:
+          type: array
+          items:
+            $ref: "#/components/schemas/TargetPosition"
         orders:
           type: array
           items:

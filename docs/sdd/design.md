@@ -1,8 +1,8 @@
 # A 股多策略 Agent 量化平台：系统设计
 
-> 文档版本：1.0.8
+> 文档版本：1.0.10
 > 基线日期：2026-10-29
-> 对应提案：`docs/sdd/proposal.md` 1.0.8
+> 对应提案：`docs/sdd/proposal.md` 1.0.10
 > 最后复核：2026-11-08
 > 状态：已实现基线与目标边界并存；每个“当前实现”与“后续演进”均显式标注。
 
@@ -105,6 +105,10 @@ src/quant_agent/
     features.py     # FeatureStore, PersistentFeatureStore
     runs.py         # RunManifestFactory
     portfolio.py    # SignalAdapter、SignalComposer、组合风险约束
+    identity.py     # canonical hash / canonical value
+    strategy_identity.py # 回测与模拟盘共享的完整运行身份
+    strategy_backtest.py # 策略驱动回测编排
+    paper_strategy.py   # 策略驱动模拟盘决策、PIT 读取绑定
   adapters/
     market_data.py  # 内存/CSV/Parquet/DuckDB PIT 端口与质量事件
     westock.py      # westock Markdown/缓存/在线适配器
@@ -268,27 +272,55 @@ costs.json ──► BacktestConfig
 ### 5.4 模拟盘
 
 ```text
-approval ledger ──┐
-strategy config ──┼──► PaperGateway
-config_hash ──────┘        │
-                           ├── dry-run → DRY_RUN / []
-                           └── execution
-                                  │
-                                  ▼
-                         SimulatedPaperExecution
-                                  │
-                                  ▼
-                            ExecutionCore
+data artifact ──► PIT market data port ──► StrategyContext
+                                                │
+strategy config ──► StrategyRegistry ──► strategy plugins
+                                                │
+                                                ▼
+                                         SignalAdapter
+                                                │
+                                                ▼
+                                         SignalComposer
+                                                │
+approval ledger ────────────────────────────────┤
+                                                ▼
+                                         PaperGateway
+                                                │
+                                       ┌────────┴────────┐
+                                       ▼                 ▼
+                               DRY_RUN / []       accepted targets only
+                                                         │
+                                                         ▼
+                                               SimulatedPaperExecution
+                                                         │
+                                                         ▼
+                                                   ExecutionCore
 ```
 
 模拟盘约束：
 
-1. 没有审批记录，拒绝。
-2. 审批键是 `(strategy_id, config_hash)`，配置内容必须包含同一 `config_hash`。
-3. dry-run 也必须有审批记录，只返回空订单计划。
-4. 非 dry-run 必须有执行器；CLI 可从 `execution` 配置构造默认模拟执行器。
-5. 配置缺 `universe`、`market`、instrument 元数据或执行参数时 fail closed。
-6. 模拟盘和回测不得绕过 `TradingRulesPlugin` 或 `ExecutionCore`。
+1. 每次运行都先调用已启用策略插件；`universe` 只可作为策略配置或执行白名单，不能直接等同于买入列表。
+2. 策略上下文绑定 `MarketDataPort` 和运行时 `as_of`；未来数据仍由 PIT 端口拒绝。
+3. `SignalAdapter` 负责有效期、行业和版本校验，`SignalComposer` 负责净目标与组合风险；只有 `accepted`/`reduced` 且净权重为正的目标进入模拟执行。
+4. approval 和 run 都必须显式提供 `--as-of`；时间统一归一化到 `Asia/Shanghai`，evaluator、execution、manifest 和调度历史使用同一时刻。
+5. 没有审批记录或审批绑定不匹配，拒绝。审批键为 `(strategy_id, config_hash)`，记录同时绑定 `strategy_version` 和本次实际 PIT 读取快照 `data_snapshot`。
+6. `config_hash` 由共享 `strategy_run_identity()` 计算，覆盖规范化 `as_of`、策略 id/版本/`config_fingerprint()`、风险配置、规则日历指纹、instrument、行业、前收映射和完整 paper 配置；显式 `config_hash` 若存在必须与计算值一致。
+7. `MarketDataPort` 的每次实际读取进入 `RunBoundMarketDataPort`；future read fail closed，审批保存的 snapshot 与运行重算值不一致时拒绝。
+8. 无有效目标返回 `NO_SIGNAL`；存在目标但全部被风险层拒绝或没有成交时返回 `PAPER_EXECUTED`。不得用 `universe` 伪造空买入。
+9. dry-run 也调用策略和组合层，返回与真实运行相同的 `RunManifest`、信号、决策和目标，但订单为空。
+10. 非 dry-run 在任何结果返回前都要求执行器；CLI 可从 `execution` 配置构造默认模拟执行器。
+11. accepted target 必须有正数 `last` 和 `previous_close`；缺失时可用显式 `previous_close_by_symbol`，否则在产生订单前 fail closed。`tradable` 必须为布尔，`board_volume` 必须为非负 decimal string。
+12. 注入执行器返回的订单仍必须属于 accepted targets、side 为 `buy`、quantity 为正整数、status 属于契约枚举；否则 fail closed。
+13. 策略崩溃、配置或数据缺字段、instrument 元数据或市场快照不完整时 fail closed。
+14. 模拟盘和回测不得绕过 `TradingRulesPlugin` 或 `ExecutionCore`。
+
+模拟盘输入配置至少包含：
+
+- `strategy_config`：当前 `--strategy` 对应的插件配置；
+- `data.bars`：可构造 PIT 端口的数据制品；
+- `instruments`：顶层 instrument 元数据，供策略与执行共享；
+- `market`：执行时点的最新行情快照；
+- 可选 `execution`、`session`、`industry_by_symbol`、`previous_close_by_symbol` 和 Python API 风险约束注入。
 
 ### 5.5 Agent
 
@@ -573,7 +605,7 @@ model_id, arguments_sha256, arguments, output, reason_code
 
 | 编号 | 差距 | 影响 | 对应任务 |
 |---|---|---|---|
-| G-02 | 策略插件未接入模拟盘 | 模拟盘只验证成交通道 | P-002 |
+| G-02 | 已由 P-002 关闭 | 策略、组合风控、实际 PIT 读取和审批身份已接线 | P-002（已完成） |
 | G-04 | 质量事件未接入生产管线 | `block` 尚未自动阻断实际运行 | P-004 |
 | G-05 | RunManifest/审计未强制写产物 | 运行级追溯不完整 | P-005 |
 | G-07 | 环境配置未统一加载 | CLI 行为与声明环境可能不一致 | P-007 |
@@ -584,7 +616,7 @@ model_id, arguments_sha256, arguments, output, reason_code
 | G-12 | 注入式模拟执行器订单字段未归一化 | CLI 产物结构随执行器变化 | P-015 |
 | G-13 | 审批账本覆写且无并发保护 | 审计历史与并发写入不可保证 | P-017 |
 
-G-01 已由 P-001 关闭：策略回测编排器和 `backtest run --mode strategy` 已交付，端到端证据见 `docs/sdd/task.md`。
+G-01 已由 P-001 关闭：策略回测编排器和 `backtest run --mode strategy` 已交付。G-02 已由 P-002 关闭：paper CLI 先运行策略/组合风控，并绑定实际 PIT 读取快照；端到端证据见 `docs/sdd/task.md`。
 
 ## 13. 验证矩阵
 
@@ -601,6 +633,7 @@ G-01 已由 P-001 关闭：策略回测编排器和 `backtest run --mode strateg
 | 插件生命周期 | `tests/unit/strategies/test_registry.py`、`tests/unit/strategies/test_plugin_isolation.py` |
 | Agent 边界 | `tests/unit/agents/test_gateway.py`、`tests/unit/agents/test_agent_roles.py` |
 | 模拟盘审批 | `tests/unit/agents/test_paper_cli.py` |
+| 模拟盘策略编排/身份/PIT | `tests/unit/application/test_paper_strategy_orchestrator.py`、`tests/unit/agents/test_paper_gateway.py` |
 | CLI 契约 | `tests/unit/cli/test_cli_commands.py` |
 | 报告安全 | `tests/unit/strategies/test_reporting.py` |
 | 环境与部署 | `tests/unit/configs/test_environments.py` |

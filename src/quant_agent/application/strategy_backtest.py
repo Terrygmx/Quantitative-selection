@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import dataclasses
-import hashlib
-import json
 from collections.abc import Mapping, Sequence
-from datetime import date, datetime, time
+from datetime import datetime, time
 from decimal import Decimal, DecimalException
 from typing import Any, cast
 from zoneinfo import ZoneInfo
@@ -15,15 +12,20 @@ from quant_agent.application.backtest import (
     BacktestConfig,
     MultiInstrumentBacktestEngine,
 )
+from quant_agent.application.identity import canonical_hash
 from quant_agent.application.metrics import BacktestMetrics
 from quant_agent.application.portfolio import PortfolioRiskConfig, SignalAdapter, SignalComposer
 from quant_agent.application.runs import RunManifestFactory
+from quant_agent.application.strategy_identity import (
+    strategy_run_identity,
+    strategy_state,
+    validate_signal_provenance,
+)
 from quant_agent.domain.models import Instrument, RunManifest, Signal
 from quant_agent.ports.market_data import DataUnavailable, MarketDataPort
 from quant_agent.rules.trading import TradingRulesPlugin
 from quant_agent.strategies.context import StrategyContext
 from quant_agent.strategies.registry import StrategyRegistry
-
 
 CN_MARKET_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -69,65 +71,6 @@ class RunBoundMarketDataPort:
             self._reads[key]
             for key in sorted(self._reads)
         ]
-
-
-def _canonical_hash(value: object) -> str:
-    payload = json.dumps(
-        _canonical_value(value),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
-def _canonical_value(value: object) -> object:
-    if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return _canonical_value(dataclasses.asdict(value))
-    if isinstance(value, Mapping):
-        return {
-            str(key): _canonical_value(item)
-            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-        }
-    if isinstance(value, (set, frozenset)):
-        items = [_canonical_value(item) for item in value]
-        return sorted(
-            items,
-            key=lambda item: json.dumps(
-                item, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-            ),
-        )
-    if isinstance(value, (list, tuple)):
-        return [_canonical_value(item) for item in value]
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if isinstance(value, date):
-        return value.isoformat()
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    raise TypeError(f"unsupported canonical value: {type(value).__name__}")
-
-
-def _rules_identity(rules: TradingRulesPlugin) -> dict[str, object]:
-    calendar = rules.calendar
-    if calendar is None:
-        return {"calendar": "weekday"}
-    fingerprint = getattr(calendar, "calendar_fingerprint", None)
-    if not callable(fingerprint):
-        raise ValueError("rules calendar must provide calendar_fingerprint()")
-    return {"calendar": fingerprint()}
-
-
-def _strategy_state(strategy: object) -> dict[str, object]:
-    fingerprint = getattr(strategy, "config_fingerprint", None)
-    if not callable(fingerprint):
-        raise ValueError("strategy must provide config_fingerprint()")
-    value = fingerprint()
-    if not isinstance(value, Mapping):
-        raise ValueError("strategy config_fingerprint() must return a mapping")
-    return dict(value)
 
 
 class StrategyBacktestOrchestrator:
@@ -202,24 +145,24 @@ class StrategyBacktestOrchestrator:
             try:
                 strategy = registry.get(strategy_id)
                 self.strategy_versions[strategy_id] = strategy.metadata.version
-                self.strategy_states[strategy_id] = _strategy_state(strategy)
+                self.strategy_states[strategy_id] = strategy_state(strategy)
             except KeyError as exc:
                 raise ValueError(f"unknown strategy id: {strategy_id}") from exc
-        self.config_hash = _canonical_hash(
-            {
+        self.config_hash = strategy_run_identity(
+            as_of=self.as_of,
+            strategy_ids=self.strategy_ids,
+            strategy_versions=self.strategy_versions,
+            strategy_states=self.strategy_states,
+            strategy_configs=self.strategy_configs,
+            instruments=self.instruments,
+            industry_by_symbol=self.industry_by_symbol,
+            previous_close_by_symbol=self.previous_close_by_symbol,
+            portfolio_risk=self.portfolio_risk,
+            rules=self.rules,
+            extra={
                 "config": config,
-                "as_of": self.as_of,
                 "decision_time": decision_time,
-                "portfolio_risk": self.portfolio_risk,
-                "strategy_ids": self.strategy_ids,
-                "strategy_versions": self.strategy_versions,
-                "strategy_configs": self.strategy_configs,
-                "strategy_states": self.strategy_states,
-                "instruments": self.instruments,
-                "industry_by_symbol": self.industry_by_symbol,
-                "previous_close_by_symbol": self.previous_close_by_symbol,
-                "rules": _rules_identity(rules),
-            }
+            },
         )
         if manifest is not None and manifest.config_hash != self.config_hash:
             raise ValueError("supplied RunManifest config_hash does not match inputs")
@@ -241,6 +184,10 @@ class StrategyBacktestOrchestrator:
             raise ValueError(f"strategy plugins failed: {details}")
         if not all(isinstance(signal, Signal) for signal in plugin_result.signals):
             raise ValueError("strategy plugins returned a non-Signal output")
+        validate_signal_provenance(
+            plugin_result.signals,
+            self.strategy_versions,
+        )
         domain_signals = cast(list[Signal], list(plugin_result.signals))
         domain_signals = self._with_configured_industries(domain_signals)
 
@@ -272,7 +219,7 @@ class StrategyBacktestOrchestrator:
         engine.run()
         orders = self._orders(engine)
         fills = self._fills(engine)
-        data_snapshot = _canonical_hash(
+        data_snapshot = canonical_hash(
             {"as_of": self.as_of, "reads": bound_port.snapshot()}
         )
         if self.manifest is not None:

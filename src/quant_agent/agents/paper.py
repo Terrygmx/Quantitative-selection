@@ -12,13 +12,19 @@ from quant_agent.application.execution import (
     ExecutionOutcome,
     ExecutionPosition,
 )
+from quant_agent.application.paper_strategy import PaperStrategyPlan
+from quant_agent.application.paper_strategy import PaperStrategyIdentity
+from quant_agent.application.portfolio import (
+    ComposerSignal,
+    RiskDecision,
+    TargetPosition,
+)
+from quant_agent.domain.models import Instrument, Order, RunManifest
 from quant_agent.ports.clock import Clock, SystemClock
-from quant_agent.domain.models import Instrument, Order
 from quant_agent.rules.trading import (
     MarketSnapshot,
     TradingRulesPlugin,
 )
-
 
 CN_MARKET_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -36,14 +42,36 @@ def _parse_price(value: object) -> Decimal:
 @dataclass(frozen=True, slots=True)
 class ApprovalRecord:
     strategy_id: str
+    strategy_version: str
     config_hash: str
+    data_snapshot: str
     approved_by: str
+
+    def __post_init__(self) -> None:
+        for field in (
+            self.strategy_id,
+            self.strategy_version,
+            self.config_hash,
+            self.data_snapshot,
+            self.approved_by,
+        ):
+            if not field.strip():
+                raise ValueError("approval fields must be non-empty")
 
 
 @dataclass(frozen=True, slots=True)
 class PaperRunResult:
     status: str
     orders: list[Mapping[str, object]]
+    as_of: datetime
+    strategy_version: str
+    config_hash: str
+    data_snapshot: str
+    read_snapshot: str
+    manifest: RunManifest
+    signals: tuple[ComposerSignal, ...]
+    decisions: tuple[RiskDecision, ...]
+    targets: tuple[TargetPosition, ...]
 
 
 class PaperExecution(Protocol):
@@ -55,15 +83,33 @@ class PaperExecution(Protocol):
     ) -> list[Mapping[str, object]]: ...
 
 
+class PaperStrategyEvaluator(Protocol):
+    def identity(
+        self,
+        strategy_id: str,
+        config: Mapping[str, object],
+        as_of: datetime,
+    ) -> PaperStrategyIdentity: ...
+
+    def evaluate(
+        self,
+        strategy_id: str,
+        config: Mapping[str, object],
+        as_of: datetime,
+    ) -> PaperStrategyPlan: ...
+
+
 class PaperGateway:
     def __init__(
         self,
         clock: Clock = SystemClock(),
         execution: PaperExecution | None = None,
+        strategy_evaluator: PaperStrategyEvaluator | None = None,
     ) -> None:
         self.approvals: dict[tuple[str, str], ApprovalRecord] = {}
         self.clock = clock
         self.execution = execution
+        self.strategy_evaluator = strategy_evaluator
 
     def approve(self, approval: ApprovalRecord) -> None:
         self.approvals[(approval.strategy_id, approval.config_hash)] = approval
@@ -75,16 +121,121 @@ class PaperGateway:
         dry_run: bool,
         run_at: datetime | None = None,
     ) -> PaperRunResult:
-        key = (strategy_id, str(config.get("config_hash", "")))
-        if key not in self.approvals:
+        if self.strategy_evaluator is None:
+            raise ValueError("strategy evaluator is not configured")
+        requested_at = run_at if run_at is not None else self.clock.now()
+        if requested_at.tzinfo is None:
+            raise ValueError("paper run time must be timezone-aware")
+        occurred_at = requested_at.astimezone(CN_MARKET_TZ)
+        identity = self.strategy_evaluator.identity(
+            strategy_id,
+            config,
+            occurred_at,
+        )
+        if identity.strategy_id != strategy_id:
+            raise ValueError(
+                "strategy configuration approval binding does not match"
+            )
+        key = (strategy_id, identity.config_hash)
+        approval = self.approvals.get(key)
+        if approval is None:
             raise ValueError("strategy configuration approval is required")
-        if dry_run:
-            return PaperRunResult(status="DRY_RUN", orders=[])
-        if self.execution is None:
+        if approval.strategy_version != identity.strategy_version:
+            raise ValueError(
+                "strategy configuration approval binding does not match"
+            )
+        if not dry_run and self.execution is None:
             raise ValueError("paper execution is not configured")
-        occurred_at = run_at if run_at is not None else self.clock.now()
-        orders = self.execution.execute(strategy_id, config, occurred_at)
-        return PaperRunResult(status="PAPER_EXECUTED", orders=list(orders))
+        plan = self.strategy_evaluator.evaluate(
+            strategy_id,
+            config,
+            occurred_at,
+        )
+        if (
+            plan.strategy_id != strategy_id
+            or plan.config_hash != identity.config_hash
+            or plan.strategy_version != identity.strategy_version
+            or plan.data_snapshot != approval.data_snapshot
+        ):
+            raise ValueError(
+                "strategy configuration approval binding does not match"
+            )
+        if not plan.targets:
+            return self._result("NO_SIGNAL", plan, [], occurred_at)
+        if dry_run:
+            return self._result("DRY_RUN", plan, [], occurred_at)
+        if not plan.execution_symbols:
+            return self._result("PAPER_EXECUTED", plan, [], occurred_at)
+        execution_config = dict(config)
+        execution_config["universe"] = list(plan.execution_symbols)
+        execution = self.execution
+        if execution is None:
+            raise ValueError("paper execution is not configured")
+        orders = execution.execute(
+            strategy_id,
+            execution_config,
+            occurred_at,
+        )
+        for order in orders:
+            self._validate_order(order, plan.execution_symbols)
+        return self._result(
+            "PAPER_EXECUTED", plan, list(orders), occurred_at
+        )
+
+    @staticmethod
+    def _validate_order(
+        order: Mapping[str, object],
+        accepted_symbols: tuple[str, ...],
+    ) -> None:
+        if not isinstance(order, Mapping):
+            raise ValueError("paper executor returned a non-object order")
+        symbol = order.get("symbol")
+        if not isinstance(symbol, str) or symbol not in accepted_symbols:
+            raise ValueError(
+                "paper executor returned an order outside accepted targets"
+            )
+        if order.get("side") != "buy":
+            raise ValueError(
+                "paper executor returned an unsupported order direction"
+            )
+        quantity = order.get("quantity")
+        if (
+            isinstance(quantity, bool)
+            or not isinstance(quantity, int)
+            or quantity <= 0
+        ):
+            raise ValueError(
+                "paper executor returned an invalid order quantity"
+            )
+        status = order.get("status")
+        if not isinstance(status, str) or status not in {
+            "FILLED",
+            "REJECTED",
+            "QUEUED_AFTER_HOURS",
+            "EXPIRED",
+        }:
+            raise ValueError("paper executor returned an invalid order status")
+
+    @staticmethod
+    def _result(
+        status: str,
+        plan: PaperStrategyPlan,
+        orders: list[Mapping[str, object]],
+        as_of: datetime,
+    ) -> PaperRunResult:
+        return PaperRunResult(
+            status=status,
+            orders=orders,
+            as_of=as_of,
+            strategy_version=plan.strategy_version,
+            config_hash=plan.config_hash,
+            data_snapshot=plan.data_snapshot,
+            read_snapshot=plan.read_snapshot,
+            manifest=plan.manifest,
+            signals=plan.signals,
+            decisions=plan.decisions,
+            targets=plan.targets,
+        )
 
 
 class PaperScheduler:
@@ -108,9 +259,12 @@ class PaperScheduler:
         self.history.append(
             {
                 "strategy_id": strategy_id,
-                "config_hash": str(config.get("config_hash", "")),
+                "strategy_version": result.strategy_version,
+                "config_hash": result.config_hash,
+                "data_snapshot": result.data_snapshot,
+                "run_id": result.manifest.run_id,
                 "status": result.status,
-                "run_at": run_at.isoformat() if run_at else "",
+                "run_at": result.as_of.isoformat(),
             }
         )
         return result
@@ -125,6 +279,40 @@ class PaperExecutionConfig:
     buy_quantity: int = 100
     fill_model: str = "slippage"
     board_queue_policy: str = "reject"
+
+    def __post_init__(self) -> None:
+        decimals = (
+            ("initial_cash", self.initial_cash, False),
+            ("commission_rate", self.commission_rate, True),
+            ("stamp_tax_rate", self.stamp_tax_rate, True),
+            ("slippage_rate", self.slippage_rate, True),
+        )
+        for field, value, allow_zero in decimals:
+            if not isinstance(value, Decimal):
+                raise ValueError(f"{field} must be a Decimal")
+            if not value.is_finite() or value < 0 or (
+                not allow_zero and value == 0
+            ):
+                relation = "non-negative" if allow_zero else "positive"
+                raise ValueError(f"{field} must be finite and {relation}")
+        if (
+            isinstance(self.buy_quantity, bool)
+            or not isinstance(self.buy_quantity, int)
+            or self.buy_quantity <= 0
+        ):
+            raise ValueError("buy_quantity must be a positive integer")
+        if (
+            not isinstance(self.fill_model, str)
+            or self.fill_model not in {"slippage", "next_open", "vwap"}
+        ):
+            raise ValueError("fill_model must be slippage, next_open or vwap")
+        if (
+            not isinstance(self.board_queue_policy, str)
+            or self.board_queue_policy not in {"reject", "queue_fill"}
+        ):
+            raise ValueError(
+                "board_queue_policy must be reject or queue_fill"
+            )
 
     @property
     def costs(self) -> ExecutionCosts:
@@ -173,6 +361,7 @@ class SimulatedPaperExecution:
         self._last_prices: dict[str, Decimal] = {}
         self._previous_closes: dict[str, Decimal] = {}
         self._tradable: dict[str, bool] = {}
+        self._vwap_references: dict[str, Decimal] = {}
         self.after_hours_queue: list[AfterHoursIntent] = []
 
     @property
@@ -201,6 +390,48 @@ class SimulatedPaperExecution:
             raise ValueError("strategy config requires a market snapshot mapping")
         session = self._session(config)
         universe = self._universe(config)
+        raw_previous = config.get("previous_close_by_symbol", {})
+        if not isinstance(raw_previous, Mapping):
+            raise ValueError("previous_close_by_symbol must be a mapping")
+        previous_by_symbol = {
+            str(symbol): _parse_price(value)
+            for symbol, value in raw_previous.items()
+        }
+        prepared_market: dict[str, dict[str, object]] = {}
+        for symbol in universe:
+            snapshot_data = market.get(symbol)
+            if not isinstance(snapshot_data, Mapping):
+                raise ValueError(
+                    f"{symbol} market snapshot is required to trade the universe"
+                )
+            last = _parse_price(snapshot_data.get("last"))
+            previous_close = _parse_price(
+                snapshot_data.get("previous_close")
+            )
+            if previous_close <= 0:
+                previous_close = previous_by_symbol.get(symbol, Decimal("0"))
+            if previous_close <= 0:
+                raise ValueError(
+                    f"{symbol} market snapshot requires a positive previous_close"
+                )
+            tradable = snapshot_data.get("tradable", True)
+            if not isinstance(tradable, bool):
+                raise ValueError(
+                    f"{symbol} market snapshot tradable must be a boolean"
+                )
+            board_volume = snapshot_data.get("board_volume")
+            if board_volume not in (None, ""):
+                parsed_board = _parse_price(board_volume)
+                if parsed_board < 0:
+                    raise ValueError(
+                        f"{symbol} market snapshot board_volume must be non-negative"
+                    )
+            prepared_market[symbol] = {
+                **dict(snapshot_data),
+                "last": str(last),
+                "previous_close": str(previous_close),
+            }
+        market = prepared_market
         orders: list[Mapping[str, object]] = []
         if session == "after_hours_fixed":
             orders.extend(self._match_after_hours_queue(market, run_at))
@@ -226,9 +457,11 @@ class SimulatedPaperExecution:
                 snapshot_data.get("previous_close") if is_mapping else None
             )
             self._last_prices[symbol] = last
-            self._previous_closes[symbol] = (
-                previous_close if previous_close > 0 else last
-            )
+            self._previous_closes[symbol] = previous_close
+            if self.config.fill_model == "vwap":
+                self._vwap_references[symbol] = self._vwap_reference(
+                    snapshot_data, symbol
+                )
             if session == "after_hours_fixed":
                 orders.append(
                     self._after_hours_intent(
@@ -390,7 +623,17 @@ class SimulatedPaperExecution:
             return self._reject_intent(
                 instrument.symbol, "buy", size, "INVALID_PRICE", timestamp
             )
-        fill_price = self.core.order_price(instrument, market.last, "buy", timestamp)
+        fill_price = self.core.order_price(
+            instrument,
+            market.last,
+            "buy",
+            timestamp,
+            reference=(
+                self._vwap_references.get(instrument.symbol)
+                if self.config.fill_model == "vwap"
+                else None
+            ),
+        )
         order = self._create_order(
             instrument.symbol, "buy", size, fill_price, timestamp
         )
@@ -404,15 +647,28 @@ class SimulatedPaperExecution:
             raise ValueError(
                 f"{instrument.symbol} has no observed market price to sell"
             )
+        previous_close = self._previous_closes.get(instrument.symbol)
+        if previous_close is None:
+            raise ValueError(
+                f"{instrument.symbol} has no previous close to price a sell"
+            )
         snapshot = {
             "last": str(last),
-            "previous_close": str(
-                self._previous_closes.get(instrument.symbol, last)
-            ),
+            "previous_close": str(previous_close),
             "tradable": self._tradable.get(instrument.symbol, True),
         }
         market = self._market_snapshot(instrument, snapshot)
-        fill_price = self.core.order_price(instrument, market.last, "sell", timestamp)
+        fill_price = self.core.order_price(
+            instrument,
+            market.last,
+            "sell",
+            timestamp,
+            reference=(
+                self._vwap_references.get(instrument.symbol)
+                if self.config.fill_model == "vwap"
+                else None
+            ),
+        )
         order = self._create_order(
             instrument.symbol, "sell", quantity, fill_price, timestamp
         )
@@ -494,7 +750,7 @@ class SimulatedPaperExecution:
         data = snapshot if isinstance(snapshot, Mapping) else {}
         last = _parse_price(data.get("last"))
         previous_close = _parse_price(data.get("previous_close"))
-        tradable = bool(data.get("tradable", True))
+        tradable = data.get("tradable", True) is not False
         raw_board_volume = data.get("board_volume")
         board_volume = (
             _parse_price(raw_board_volume)
@@ -504,7 +760,18 @@ class SimulatedPaperExecution:
         return MarketSnapshot(
             instrument=instrument,
             last=last,
-            previous_close=previous_close if previous_close > 0 else last,
+            previous_close=previous_close,
             tradable=tradable,
             board_volume=board_volume,
         )
+
+    @staticmethod
+    def _vwap_reference(snapshot: object, symbol: str) -> Decimal:
+        data = snapshot if isinstance(snapshot, Mapping) else {}
+        amount = _parse_price(data.get("amount"))
+        volume = _parse_price(data.get("volume"))
+        if amount <= 0 or volume <= 0:
+            raise ValueError(
+                f"{symbol} vwap fill requires positive amount and volume"
+            )
+        return amount / volume

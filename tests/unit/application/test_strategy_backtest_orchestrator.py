@@ -293,6 +293,53 @@ def test_orchestrator_runs_only_selected_strategies():
     assert [signal["strategy_id"] for signal in result["signals"]] == ["selected"]
 
 
+def test_backtest_rejects_signal_with_foreign_strategy_identity():
+    class ForeignStrategy:
+        metadata = StrategyMetadata(
+            strategy_id="selected",
+            version="0.1.0",
+            frequency="daily",
+        )
+
+        def on_snapshot(self, context) -> list[Signal]:
+            return [
+                Signal(
+                    strategy_id="foreign",
+                    version="9.9.9",
+                    symbol="sh600519",
+                    side="long",
+                    target_weight=0.1,
+                    confidence=1.0,
+                    valid_from=AS_OF,
+                    valid_to=AS_OF + timedelta(days=1),
+                    evidence={"industry": "Technology"},
+                )
+            ]
+
+        def config_fingerprint(self) -> dict[str, object]:
+            return {"selected": "foreign-test"}
+
+    registry = StrategyRegistry()
+    registry.register(ForeignStrategy())
+    orchestrator = StrategyBacktestOrchestrator(
+        port=port_with_future_bars(
+            "sh600519",
+            [10.0] * 30,
+        ),
+        instruments={
+            "sh600519": instrument("sh600519")
+        },
+        config=config(),
+        rules=TradingRulesPlugin(),
+        registry=registry,
+        strategy_ids=("selected",),
+        as_of=AS_OF,
+    )
+
+    with pytest.raises(ValueError, match="foreign strategy identity"):
+        orchestrator.run()
+
+
 def test_adapted_signals_include_industry_for_the_output_contract():
     closes = [9.0 + index * 0.05 for index in range(40)] + [11.5]
     registry = StrategyRegistry()

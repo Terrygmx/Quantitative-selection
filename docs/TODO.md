@@ -48,6 +48,7 @@
 - [x] `validate_output` 已通过锁定的 jsonschema 4.25.1 支持 JSON Schema Draft 2020-12。
 - [x] 工具调用生成绑定 `RunManifest` 的不可变审计事件，记录输入摘要、模型标识、结构化输出，并支持 JSONL 持久化。
 - [x] 模拟盘 Gateway 与调度器已具备配置哈希绑定的人工批准记录、dry-run 空订单计划、可注入的非 dry-run 执行器、运行时间传递和运行历史；`paper approve/run` 命令入口已提供并默认 fail closed。
+- [x] P-002：`paper run` 已接入策略注册表、PIT `StrategyContext`、Signal 适配与组合风控；审批绑定策略版本、完整运行身份和实际 PIT snapshot，只执行 accepted/reduced 正权重目标。
 - [x] 非 dry-run 默认执行器 `SimulatedPaperExecution` 已接入 `TradingRulesPlugin`、订单状态机与 `MarketSnapshot`，覆盖 T+1 结算、佣金、印花税、滑点、最小价位、现金不足、停牌、涨跌停、非整手和非连续竞价拒绝；CLI 可从配置 `execution` 段构造执行器，缺少该段仍 fail closed。
 - [x] 默认模拟执行器与 `MultiInstrumentBacktestEngine` 已共用同一成交内核 `ExecutionCore`（`src/quant_agent/application/execution.py`）：规则校验、滑点、tick 取整、费用、现金与 T+1 账本单一来源，跨引擎等价测试锁定行为一致（成交价/费用/现金/持仓/拒绝优先级）。
 - [x] `StaticTradingCalendar` 的 2027+ 与勘误已可通过 `FileCalendarSource` 外部供给（见 M2 与 RUNBOOK）。

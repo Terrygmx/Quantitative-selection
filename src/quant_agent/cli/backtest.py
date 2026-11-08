@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal, DecimalException
 from pathlib import Path
 from typing import Mapping, Sequence, cast
@@ -26,19 +26,8 @@ from quant_agent.application.strategy_backtest import (
 from quant_agent.domain.models import Instrument
 from quant_agent.rules.calendar import StaticTradingCalendar
 from quant_agent.rules.trading import TradingRulesPlugin
-from quant_agent.strategies.industry_rotation.strategy import IndustryRotationStrategy
-from quant_agent.strategies.low_vol_quality.strategy import LowVolQualityStrategy
-from quant_agent.strategies.mean_reversion.strategy import MeanReversionStrategy
-from quant_agent.strategies.registry import Strategy, StrategyRegistry
-from quant_agent.strategies.trend_breakout.strategy import TrendBreakoutStrategy
-
-
-STRATEGY_FACTORIES = {
-    "trend_breakout": TrendBreakoutStrategy.from_config,
-    "mean_reversion_liquid": MeanReversionStrategy.from_config,
-    "low_vol_quality": LowVolQualityStrategy.from_config,
-    "industry_rotation": IndustryRotationStrategy.from_config,
-}
+from quant_agent.strategies.factory import build_strategy_registry
+from quant_agent.strategies.registry import StrategyRegistry
 
 
 def _load_json(path: Path) -> object:
@@ -81,7 +70,7 @@ def _bars_for_engine(
     start: date | None = None,
     end: date | None = None,
 ) -> dict[str, list[Mapping[str, object]]]:
-    as_of = datetime.now(timezone.utc)
+    as_of = datetime.now(UTC)
     bars: dict[str, list[Mapping[str, object]]] = {}
     for symbol in symbols:
         rows = port.bars(symbol, as_of)
@@ -440,11 +429,6 @@ def _strategy_registry(
     strategy_ids = tuple(raw_ids)
     if len(set(strategy_ids)) != len(strategy_ids):
         raise ValueError("strategies must not contain duplicates")
-    unknown = [item for item in strategy_ids if item not in STRATEGY_FACTORIES]
-    if unknown:
-        raise ValueError(
-            "unsupported strategy ids for CSV strategy mode: " + ", ".join(unknown)
-        )
     raw_configs = config_data.get("strategy_configs")
     if not isinstance(raw_configs, Mapping):
         raise ValueError("strategy_configs must be an object")
@@ -459,25 +443,7 @@ def _strategy_registry(
             + ", ".join(sorted(invalid_configs))
         )
     configs = cast(Mapping[str, Mapping[str, object]], raw_configs)
-    missing_configs = [
-        strategy_id for strategy_id in strategy_ids if strategy_id not in raw_configs
-    ]
-    if missing_configs:
-        raise ValueError(
-            "strategy_configs is missing: " + ", ".join(missing_configs)
-        )
-    registry = StrategyRegistry()
-    for strategy_id in strategy_ids:
-        plugin_config = configs[strategy_id]
-        if not isinstance(plugin_config, Mapping):
-            raise ValueError(f"strategy_configs.{strategy_id} must be an object")
-        try:
-            strategy = STRATEGY_FACTORIES[strategy_id](dict(plugin_config))
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError(
-                f"invalid config for strategy {strategy_id}: {exc}"
-            ) from exc
-        registry.register(cast(Strategy, strategy))
+    registry = build_strategy_registry(strategy_ids, configs)
     return registry, strategy_ids, configs
 
 

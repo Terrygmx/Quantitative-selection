@@ -1,6 +1,6 @@
 # A 股多策略 Agent 量化平台：任务清单
 
-> 文档版本：1.0.8
+> 文档版本：1.0.10
 > 基线日期：2026-10-29
 > 基线提交：`7052b7e`
 > 最后复核：2026-11-08
@@ -206,7 +206,7 @@ python3 -m py_compile src/tail_momentum_selector.py $(find src/quant_agent -name
   - `.coveragerc`
   - `tests/performance/test_benchmark.py`
   - `docs/RUNBOOK.md` 的“性能基准”章节
-  - 本次基线：407 passed / 1 skipped / 93% coverage / Ruff clean / Mypy clean
+  - P-002 交付基线：514 passed / 1 skipped / 92% coverage / Ruff clean / Mypy clean
 
 ### T-140 校验机器可读接口契约
 
@@ -215,11 +215,11 @@ python3 -m py_compile src/tail_momentum_selector.py $(find src/quant_agent -name
 - 验收标准（SC-11、AC-11）：YAML 解析成功；引用的 `components.schemas` 均存在；文档中 `P-*` 任务均有定义；CLI 参数与当前 `build_parser()` 对齐。
 - 状态：`[x]`
 - 证据：
-  - Python `yaml` 唯一键解析 + `$ref` 扫描：`schemas=36 refs=51 distinct_targets=18 missing=0`
+  - Python `yaml` 唯一键解析 + `$ref` 扫描：`schemas=36 refs=59 distinct_targets=19 missing=0`
   - `jsonschema.Draft202012Validator.check_schema`：36 个 Schema 语法全部通过
   - 关键产物样例：`StrategyList`、`ApprovalLedger`、`BacktestEnvelope`、`StrategyBacktestOutput`、`PaperRunOutput`（完整与精简订单）、`AgentReviewOutput`、`AuditEvent`（含 `output=null` 的拒绝事件）、`LegacySignalArtifact` 均通过
   - 任务编号扫描：`P tasks defined=17 referenced=17 missing=0`
-  - CLI 参数按 `src/quant_agent/cli/` 五个模块的 `build_parser()` 对齐；数值均排除 `-h/--help`：`strategy.list=0`、`backtest.run=16`（P-001 新增 `--mode`/`--as-of`）、`report.show=1`、`agent.review=1`、`paper.approve=4`（含全局 `--approvals`）、`paper.run=4`（含全局 `--approvals` 与 `--dry-run`）
+  - CLI 参数按 `src/quant_agent/cli/` 五个模块的 `build_parser()` 对齐；数值均排除 `-h/--help`：`strategy.list=0`、`backtest.run=16`（P-001 新增 `--mode`/`--as-of`）、`report.show=1`、`agent.review=1`、`paper.approve=5`（含全局 `--approvals` 与 P-002 `--as-of`）、`paper.run=5`（含全局 `--approvals`、`--dry-run` 与 `--as-of`）
 
 ### P-001 策略插件接入回测
 
@@ -241,22 +241,34 @@ python3 -m py_compile src/tail_momentum_selector.py $(find src/quant_agent -name
   - 只读 Senior Code Reviewer 复核：Critical/Important/Minor 均为 0，结论 `Ready to merge: Yes`。
   - 本次验证：`462 passed, 1 skipped`，覆盖率 `93%`，Ruff/Mypy/源码编译通过；YAML 唯一键解析、36 个 Schema 语法与 51 处 `$ref` 目标通过。
 
-## 3. 待完成任务
-
-以下任务是当前架构差距，不代表现有能力失效。未完成前不得在提案或对外说明中宣称对应端到端能力已交付。
-
 ### P-002 策略插件接入模拟盘
 
 - 依赖：P-001、T-100
+- 状态：`[x]`
 - 目标：模拟盘由策略输出驱动，不再把 `universe` 直接当作无条件买入列表。
-- 验收标准：
-  1. 模拟盘运行时先调用策略注册表和策略上下文。
-  2. 只有通过组合与风险层的目标才进入模拟执行。
-  3. 审批记录绑定策略版本、配置哈希和数据快照。
-  4. 无信号时返回 `PAPER_EXECUTED` 或明确的 `NO_SIGNAL`，不得生成空买入。
-  5. dry-run 和非 dry-run 都保留审计证据。
-- 状态：`[ ]`
-- 预计影响：`src/quant_agent/agents/paper.py`、`src/quant_agent/cli/paper.py`、`src/quant_agent/application/`、测试
+- 验收标准与证据：
+  1. 模拟盘运行时先调用策略注册表和 PIT `StrategyContext`：`StrategyPaperOrchestrator`、`RunBoundMarketDataPort` 与 `StrategyPaperIdentity`；future read 和插件异常 fail closed。
+  2. 只有通过适配与组合风险层的 accepted/reduced 正权重目标进入模拟执行：`PaperGateway` 将 accepted symbols 作为唯一 `universe`，风险拒绝目标不下单。
+  3. 审批记录绑定策略版本、完整配置身份和本次实际 PIT 读取快照：共享 `strategy_run_identity()` 覆盖 plugin `config_fingerprint()`、risk、calendar、instrument、行业和前收；approve/run 均要求显式 `--as-of`。
+  4. 无有效目标返回 `NO_SIGNAL`；存在目标但全部被风险拒绝或没有成交时返回 `PAPER_EXECUTED`，不生成空买入。
+  5. dry-run 和非 dry-run 都返回同一 `RunManifest`、signals、decisions、targets 与 read snapshot；仅 dry-run 订单为空。
+  6. 前收缺失/非法、market snapshot 类型错误、NaN/Infinity/负费率、越界注入订单和 CLI tail-momentum 配置不完整均 fail closed。
+- 证据路径：
+  - `src/quant_agent/application/strategy_identity.py`
+  - `src/quant_agent/application/paper_strategy.py`
+  - `src/quant_agent/agents/paper.py`
+  - `src/quant_agent/cli/paper.py`
+  - `src/quant_agent/strategies/factory.py`
+  - `tests/unit/application/test_paper_strategy_orchestrator.py`
+  - `tests/unit/agents/test_paper_gateway.py`
+  - `tests/unit/agents/test_paper_cli.py`
+  - `tests/unit/agents/test_paper_execution.py`
+  - 多轮只读 Senior Code Reviewer：修复审批身份、实际 PIT snapshot、前收、数值边界、状态语义、时间归一化、信号 provenance 与 schema/runtime 漂移后，最终结论 `Critical=0 / Important=0 / Ready to merge: Yes`。
+  - 本次验证：`514 passed, 1 skipped`，覆盖率 `92%`，Ruff/Mypy/源码编译通过；YAML `36 schemas / 59 refs / 19 distinct / 0 missing`，`PaperStrategyConfig` 与 `PaperRunOutput` schema 回归通过。
+
+## 3. 待完成任务
+
+以下任务是当前架构差距，不代表现有能力失效。未完成前不得在提案或对外说明中宣称对应端到端能力已交付。
 
 ### P-003 统一 Signal 到 Composer 的适配契约
 
@@ -524,5 +536,7 @@ P-012 ← P-001, P-002, P-003, P-004, P-005, P-006, P-007, P-008, P-009, P-010, 
 | 2026-11-08 | 1.0.6 | 完成 P-003：Signal 适配、有效期/行业 fail closed、策略追溯、类型化 ComposerSignal 与评审修正 |
 | 2026-11-08 | 1.0.7 | 完成 P-006：提取 ports 包并消除 adapter 边界例外 |
 | 2026-11-08 | 1.0.8 | 完成 P-001：策略插件接入回测编排器与 CLI，补齐端到端契约和证据 |
+| 2026-11-08 | 1.0.9 | 定义 P-002：模拟盘先经策略插件、组合风控和审批绑定，再进入共享模拟执行 |
+| 2026-11-08 | 1.0.10 | 完成 P-002：策略驱动模拟盘、完整运行身份、实际 PIT snapshot、严格配置与执行边界 |
 
 > 研究产物，不构成任何投资建议或个股推荐。投资有风险，决策需谨慎。

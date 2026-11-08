@@ -58,6 +58,21 @@ def test_signal_rejects_out_of_range_target_weight():
         signal.__class__.from_dict({**signal.to_dict(), "target_weight": -1.01})
 
 
+def test_signal_requires_mapping_evidence():
+    with pytest.raises(ValueError, match="evidence"):
+        Signal(
+            strategy_id="manual",
+            version="1.0.0",
+            symbol="sh600519",
+            side="long",
+            target_weight=0.1,
+            confidence=1.0,
+            valid_from=datetime(2026, 9, 15, 14, 30, tzinfo=timezone.utc),
+            valid_to=datetime(2026, 9, 16, 9, 30, tzinfo=timezone.utc),
+            evidence=[],  # type: ignore[arg-type]
+        )
+
+
 def test_order_rejects_non_lot_quantity():
     order = Order(
         id="ord-1",

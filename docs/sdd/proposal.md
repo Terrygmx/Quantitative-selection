@@ -1,10 +1,10 @@
 # A 股多策略 Agent 量化平台：SDD 提案
 
-> 文档版本：1.0.8
+> 文档版本：1.0.10
 > 基线日期：2026-10-29
 > 基线提交：`7052b7e`
 > 最后复核：2026-11-08
-> 状态：已实现基线，持续演进；P-001 策略回测端到端已交付
+> 状态：已实现基线，持续演进；P-001 策略回测与 P-002 策略驱动模拟盘端到端已交付
 > 本文是范围与验收的最高优先级来源；实现或测试与本文冲突时，先修订本文，再修订设计、接口契约和任务清单。
 
 ## 1. 背景
@@ -81,17 +81,17 @@
 | 策略插件 | 五个插件、配置 Schema、注册表启停/版本历史/回滚、插件崩溃隔离 |
 | 组合风控 | 单票、行业、总仓位、流动性、回撤、黑名单、相关性预算、质量门 |
 | Agent | 四角色 allow/forbid、工具执行体、JSON Schema 输出校验、审计事件 |
-| 模拟盘 | 审批账本、配置哈希绑定、dry-run、默认模拟执行、盘后定价队列 |
+| 模拟盘 | 策略插件决策、组合风控、审批账本、配置/版本/数据快照绑定、dry-run、默认模拟执行、盘后定价队列 |
 | 报告 | 新平台文本信号报告、自包含 HTML、免责声明、动态文本转义；旧版看板仅自包含并带免责声明 |
 | 运维 | 四套环境配置、Dockerfile、Compose、运行手册 |
-| 质量闸门 | P-001 交付时 462 个测试通过、1 个环境相关跳过、覆盖率 93%、Ruff/Mypy 通过 |
+| 质量闸门 | P-002 交付时 514 个测试通过、1 个环境相关跳过、覆盖率 92%、Ruff/Mypy 通过 |
 
 ### 6.2 当前未闭环
 
 以下事项不应被误认为已完成：
 
 - `backtest run` 的默认 `engine` 模式仍直接驱动回测引擎；策略插件端到端能力由显式 `strategy` 模式提供，以数据快照、策略和行业映射配置作为输入。
-- `paper run` 当前按配置中的 `universe`/`market` 生成模拟订单，尚未由策略插件产生信号。
+- `paper run` 的底层执行器仍保留 `universe` 白名单接口；CLI 必须先由注册表产生信号，经组合风控形成目标，且只把 accepted/reduced 正权重目标传给该接口。
 - 质量事件采集器、`RunManifest` 和审计产物尚未统一接入每个 CLI 运行。
 - 环境配置尚未被 CLI 统一加载；部分高级成交参数只在 Python API 中可注入。
 - 模拟盘现金、持仓和运行历史目前是进程内状态，尚未持久化为跨进程 paper account；审批账本是全量覆写而非原子追加。
@@ -101,7 +101,7 @@
 - `.github/workflows/ci.yml` 包含性能基准，而 `docs/RUNBOOK.md` 称性能基准不进入默认 CI，策略待统一。
 - 分钟频尚未建立与日频同等规模的性能基准。
 
-这些差距在 `docs/sdd/task.md` 中以 `P-*` 任务登记，不得在未完成前宣称策略驱动模拟盘或全平台 HTML 转义已交付。
+这些差距在 `docs/sdd/task.md` 中以 `P-*` 任务登记。策略驱动模拟盘已由 P-002 交付；不得在 P-016 完成前宣称全平台 HTML 转义已交付。
 
 ## 7. 成功标准
 
@@ -116,7 +116,7 @@
 | SC-05 | 五个插件可注册、启停、升级、回滚且单个插件崩溃不拖垮其他插件 | 注册表与插件测试 |
 | SC-06 | 组合层对同标的冲突输出唯一净目标，并记录风险决策 | 组合测试 |
 | SC-07 | Agent 越权工具、未知角色、实时下单工具均被拒绝并审计 | Agent Gateway 测试 |
-| SC-08 | 模拟盘无审批、无执行器、无市场数据时 fail closed | Paper CLI 测试 |
+| SC-08 | 模拟盘由策略、组合风控和已审批 PIT 读取驱动；无审批、执行器或完整行情时 fail closed | Paper 编排、Gateway 与 CLI 测试 |
 | SC-09 | 新平台信号 HTML 始终包含免责声明且动态文本转义 | `tests/unit/strategies/test_reporting.py` |
 | SC-10 | 环境配置无密钥，`prod` 恒为 dry-run | 配置测试 |
 | SC-11 | 四份 SDD 文档存在、可追溯且 `docs/sdd/api-spec.yaml` 可被 YAML 解析 | 文档校验命令 |
@@ -163,9 +163,9 @@
 
 研究、数据质量、风险审阅和开发 Agent 只能调用各自白名单工具；`submit_order`、`write_production_config`、`skip_data_quality_block` 永远拒绝；每次调用必须产生审计事件。通过 `tests/unit/agents/test_gateway.py`、`tests/unit/agents/test_agent_roles.py` 验证。
 
-### AC-08 模拟盘 fail closed
+### AC-08 模拟盘策略编排与 fail closed
 
-模拟盘必须同时满足：配置已审批、`config_hash` 匹配、执行器可用、市场快照完整。任何条件缺失均返回退出码 2；dry-run 只返回空订单计划。通过 `tests/unit/agents/test_paper_cli.py` 验证。
+模拟盘必须先调用已启用策略插件并绑定显式 `--as-of` 的 PIT 上下文，再经 `SignalAdapter` 和 `SignalComposer` 形成目标。只有 `accepted` 或 `reduced` 且净权重为正的目标可进入模拟执行；被风险层拒绝的标的不得下单。审批必须同时绑定策略版本、完整运行身份哈希和本次实际 PIT 读取快照。无有效目标时返回明确的 `NO_SIGNAL`；存在目标但被风险层拒绝时返回 `PAPER_EXECUTED` 空订单。dry-run 与真实模拟运行都必须返回同一策略审计证据，只有 dry-run 的订单列表为空。配置未审批、绑定不匹配、执行器不可用、数据或市场快照不完整时返回退出码 2。通过 `tests/unit/application/test_paper_strategy_orchestrator.py`、`tests/unit/agents/test_paper_gateway.py` 和 `tests/unit/agents/test_paper_cli.py` 验证。
 
 ### AC-09 报告安全
 
@@ -186,7 +186,7 @@
 | 数据供应商口径变化 | 因子和历史结果漂移 | Raw 原文留存、适配器契约测试、金样锁定 |
 | 规则时效性 | 回测或模拟盘使用过期规则 | 规则引用表、生效日期、外部日历文件 |
 | LLM 越权 | 产生不可审计订单或配置 | 工具白名单、角色边界、人工审批、默认无实盘 |
-| 模拟盘端到端编排缺失 | 当前只能证明引擎级与策略回测能力 | 以 `P-002` 作为后续最高优先级 |
+| 策略驱动模拟盘运行身份漂移 | 注入插件、风控或规则变化可能破坏审批可追溯性 | 共享 run identity + 显式 `--as-of` + 实际 PIT snapshot 校验 |
 | 文档与实现漂移 | 误把设计目标当作现状 | 本文、`docs/sdd/design.md`、`docs/sdd/api-spec.yaml`、`docs/sdd/task.md` 同步更新 |
 
 ## 10. 变更治理

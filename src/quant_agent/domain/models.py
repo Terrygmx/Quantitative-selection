@@ -90,6 +90,8 @@ class Signal:
             raise ValueError("confidence must be in [0, 1]")
         if self.valid_from >= self.valid_to:
             raise ValueError("valid_from must be before valid_to")
+        if not isinstance(self.evidence, Mapping):
+            raise ValueError("evidence must be a mapping")
 
     def to_dict(self) -> dict[str, Any]:
         return {

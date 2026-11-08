@@ -291,6 +291,17 @@ def test_simulated_execution_rejects_unparseable_snapshot_price():
     assert paper.cash == Decimal("100000.00")
 
 
+def test_simulated_execution_fails_closed_without_previous_close():
+    paper = execution()
+    config = market_config()
+    del config["market"]["sh600176"]["previous_close"]
+
+    with pytest.raises(ValueError, match="previous_close"):
+        paper.execute("tail_momentum_overnight", config, RUN_AT)
+
+    assert paper.cash == Decimal("100000.00")
+
+
 def test_simulated_execution_requires_universe():
     paper = execution()
 
