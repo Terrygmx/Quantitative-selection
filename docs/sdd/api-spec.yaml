@@ -1,0 +1,1042 @@
+# Machine-readable contract for the current A-share research platform.
+# This is intentionally not an OpenAPI document: the platform has no HTTP
+# service. It defines CLI operations, Python protocols, configs and artifacts.
+contract:
+  name: quant-agent
+  version: "1.0.5"
+  status: implemented-baseline
+  updated_at: "2026-10-29"
+  reviewed_at: "2026-11-08"
+  compatibility: "Additive changes are allowed in 1.x; breaking changes require a major version."
+  scope:
+    - "CLI commands"
+    - "Python structural protocols"
+    - "JSON configuration files"
+    - "JSON/JSONL/text/HTML artifacts"
+  non_scope:
+    - "HTTP or RPC service"
+    - "Live broker execution"
+    - "Automatic strategy-to-backtest orchestration (tracked as P-001)"
+    - "Automatic strategy-to-paper orchestration (tracked as P-002)"
+
+conventions:
+  encoding: "UTF-8"
+  timezone: "Asia/Shanghai for market timestamps; timezone-aware ISO-8601 is required"
+  decimal: "Ledger prices, fees and decimal cost config values are JSON strings; Bar OHLCV, Signal weights, metric values and legacy signal scores are JSON numbers"
+  null: "Explicit null is allowed only where a schema declares a nullable type; otherwise optional fields must be omitted or use their declared type"
+  stdout: "Successful commands write one JSON document or human-readable text to stdout"
+  stderr: "Application-handled failures write 'error: ...' to stderr; argparse failures write argparse usage/error text; uncaught legacy or modern exceptions write a Python traceback"
+  exit_codes:
+    "0": success
+    "2": argparse errors, application-handled invalid input, missing approval, unavailable data, unsupported config, or execution error
+    "1": uncaught exceptions in legacy selector or modern CLIs may terminate with a Python traceback
+  shell_prefix:
+    PYTHONPATH: "src"
+    command_example: "PYTHONPATH=src python3 -m quant_agent.cli.<module> ..."
+
+entrypoints:
+  cli:
+    strategy.list:
+      summary: "List enabled strategy plugins."
+      invocation:
+        - "python3"
+        - "-m"
+        - "quant_agent.cli.strategy"
+        - "list"
+      environment:
+        PYTHONPATH: "src"
+      arguments: []
+      stdout:
+        media_type: "application/json"
+        schema_ref: "#/components/schemas/StrategyList"
+      side_effects: []
+      exit_codes: [0, 1, 2]
+
+    backtest.run:
+      summary: "Run the deterministic daily, minute or grid backtest engine."
+      invocation:
+        - "python3"
+        - "-m"
+        - "quant_agent.cli.backtest"
+        - "run"
+      environment:
+        PYTHONPATH: "src"
+      arguments:
+        - name: "--bars"
+          type: path
+          required: true
+          description: "CSV bar file; columns follow BarCsv."
+        - name: "--instruments"
+          type: path
+          required: true
+          description: "JSON array of Instrument objects."
+        - name: "--config"
+          type: path
+          required: true
+          description: "JSON BacktestCostConfig."
+        - name: "--frequency"
+          type: enum
+          values: [daily, minute]
+          default: daily
+        - name: "--decision"
+          type: string
+          default: "1431"
+          description: "HHMM decision time for minute mode."
+        - name: "--exchange"
+          type: string
+          description: "Calendar exchange; statically accepts any string, then validates SSE/SZSE at runtime."
+          default: SSE
+        - name: "--start"
+          type: string
+          description: "ISO date, inclusive; daily mode only."
+        - name: "--end"
+          type: string
+          description: "ISO date, inclusive; daily mode only."
+        - name: "--split"
+          type: string
+          description: "ISO split date; in-sample < split, out-of-sample >= split."
+        - name: "--window"
+          type: integer
+          description: "Rolling window length in trading days; daily mode only."
+        - name: "--benchmark"
+          type: string
+          description: "Symbol from the bar file for buy-and-hold comparison."
+        - name: "--grid-low"
+          type: decimal-string
+          description: "Grid lower bound; only used when --frequency minute and --grid-steps > 0, then parsed or fail closed."
+        - name: "--grid-high"
+          type: decimal-string
+          description: "Grid upper bound; only used when --frequency minute and --grid-steps > 0, then parsed or fail closed."
+        - name: "--grid-steps"
+          type: integer
+          default: 0
+          description: "Positive grid step count enables grid mode."
+      constraints:
+        - "Minute mode rejects --start/--end/--split/--window."
+        - "--split and --window are mutually exclusive."
+        - "--split must be after --start and on/before --end when those bounds are supplied."
+      stdout:
+        media_type: "application/json"
+        schema_ref: "#/components/schemas/BacktestEnvelope"
+      side_effects: []
+      exit_codes: [0, 1, 2]
+
+    report.show:
+      summary: "Render a Signal JSON array as a text report."
+      invocation:
+        - "python3"
+        - "-m"
+        - "quant_agent.cli.report"
+        - "show"
+      environment:
+        PYTHONPATH: "src"
+      arguments:
+        - name: "--file"
+          type: path
+          required: true
+          description: "JSON array of Signal objects."
+      stdout:
+        media_type: "text/plain"
+        schema:
+          type: string
+      side_effects: []
+      exit_codes: [0, 1, 2]
+
+    agent.review:
+      summary: "Summarize an append-only Agent audit JSONL file."
+      invocation:
+        - "python3"
+        - "-m"
+        - "quant_agent.cli.agent"
+        - "review"
+      environment:
+        PYTHONPATH: "src"
+      arguments:
+        - name: "--audit"
+          type: path
+          required: true
+          description: "JSONL audit file; each line requires agent_id and status."
+      stdout:
+        media_type: "application/json"
+        schema_ref: "#/components/schemas/AgentReviewOutput"
+      side_effects: []
+      exit_codes: [0, 1, 2]
+
+    paper.approve:
+      summary: "Persist a strategy/config-hash approval in the append-or-replace ledger."
+      invocation:
+        - "python3"
+        - "-m"
+        - "quant_agent.cli.paper"
+        - "--approvals"
+        - "state/paper-approvals.json"
+        - "approve"
+      environment:
+        PYTHONPATH: "src"
+      arguments:
+        - name: "--approvals"
+          type: path
+          required: false
+          default: "state/paper-approvals.json"
+          description: "Global option before the subcommand."
+        - name: "--strategy"
+          type: string
+          required: true
+        - name: "--config"
+          type: path
+          required: true
+          description: "JSON strategy config containing config_hash."
+        - name: "--approved-by"
+          type: string
+          required: true
+      stdout:
+        media_type: "application/json"
+        schema_ref: "#/components/schemas/ApprovalRecord"
+      side_effects:
+        - "Rewrites the whole approval ledger with Path.write_text after de-duplicating (strategy_id, config_hash); no lock, temp-file replace or append-only history."
+      exit_codes: [0, 1, 2]
+
+    paper.run:
+      summary: "Run a previously approved configuration in dry-run or simulated mode."
+      invocation:
+        - "python3"
+        - "-m"
+        - "quant_agent.cli.paper"
+        - "--approvals"
+        - "state/paper-approvals.json"
+        - "run"
+      environment:
+        PYTHONPATH: "src"
+      arguments:
+        - name: "--approvals"
+          type: path
+          required: false
+          default: "state/paper-approvals.json"
+          description: "Global option before the subcommand."
+        - name: "--strategy"
+          type: string
+          required: true
+        - name: "--config"
+          type: path
+          required: true
+        - name: "--dry-run"
+          type: boolean
+          default: false
+          description: "When present, returns an empty order plan after approval checks."
+      preconditions:
+        - "The (strategy_id, config_hash) pair exists in the approval ledger."
+        - "Non-dry-run either receives an injected executor or supplies an execution config."
+        - "Every universe symbol has a market snapshot; execution instruments have metadata."
+      stdout:
+        media_type: "application/json"
+        schema_ref: "#/components/schemas/PaperRunOutput"
+      side_effects:
+        - "Non-dry-run updates simulated cash and positions through ExecutionCore."
+        - "After-hours intents may be queued in the simulated executor."
+      exit_codes: [0, 1, 2]
+
+    legacy.selector:
+      summary: "Compatibility entry point for the frozen tail-momentum scanner."
+      invocation:
+        - "python3"
+        - "src/tail_momentum_selector.py"
+      environment: {}
+      arguments:
+        - name: "--codes"
+          type: string
+          default: ""
+        - name: "--universe"
+          type: path
+          default: ""
+        - name: "--snapshot"
+          type: string
+          default: "1430"
+        - name: "--top"
+          type: integer
+          default: 5
+        - name: "--screen"
+          type: boolean
+          default: false
+        - name: "--screen-expr"
+          type: string
+          default: ""
+        - name: "--screen-limit"
+          type: integer
+          default: 50
+        - name: "--no-industry-rs"
+          type: boolean
+          default: false
+        - name: "--no-html"
+          type: boolean
+          default: false
+        - name: "--out-dir"
+          type: path
+          default: "results"
+        - name: "--cache-dir"
+          type: path
+          default: "cache"
+        - name: "--review"
+          type: boolean
+          default: false
+        - name: "--review-file"
+          type: path
+          default: ""
+        - name: "--westock-cli"
+          type: path
+          default: ""
+        - name: "--westock-tool-cli"
+          type: path
+          default: ""
+      stdout:
+        media_type: "text/plain"
+        schema:
+          type: string
+      side_effects:
+        - "Writes report_<date>.txt, signals_<date>.json and optionally dashboard_<date>.html."
+        - "Writes raw CLI responses under cache/ unless disabled."
+      exit_codes: [0, 1, 2]
+
+  python:
+    protocols:
+      Clock:
+        module: "quant_agent.domain.clock"
+        method: "now() -> datetime"
+        contract: "Returns a timezone-aware datetime."
+      MarketDataPortLike:
+        module: "quant_agent.adapters.market_data"
+        symbol: "MarketDataPortLike"
+        method: "bars(instrument: str, as_of: datetime) -> list[Bar]"
+        contract: "Returns only visible revisions; raises DataUnavailable when no visible bar exists."
+      Strategy:
+        module: "quant_agent.strategies.registry"
+        symbol: "Strategy"
+        attributes:
+          metadata: "StrategyMetadata"
+        method: "on_snapshot(context: Any) -> Sequence[object]"
+        contract: "Current protocol annotation is object-valued; concrete plugins return Signal lists. Reading only context.as_of-visible data is the platform invariant. Sequence[Signal] is a target contract (P-003/P-006)."
+      TradingRulesPlugin:
+        module: "quant_agent.rules.trading"
+        symbol: "TradingRulesPlugin"
+        methods:
+          - "tradeability(instrument, as_of) -> Tradeability"
+          - "price_limits(instrument, previous_close, day) -> PriceBand | None"
+          - "validate_order(order, portfolio, market) -> list[Rejection]"
+      PaperExecution:
+        module: "quant_agent.agents.paper"
+        method: "execute(strategy_id, config, run_at) -> list[Mapping]"
+        contract: "Only a simulated implementation is exposed; live execution is forbidden."
+      AgentGateway:
+        module: "quant_agent.agents.gateway"
+        method: "execute(AgentRequest) -> AgentResult"
+        contract: "Enforces role allowlists, global forbidden tools and append-only audit."
+
+artifacts:
+  approval_ledger:
+    path: "state/paper-approvals.json"
+    media_type: "application/json"
+    schema_ref: "#/components/schemas/ApprovalLedger"
+  agent_audit:
+    path: "state/audit-*.jsonl"
+    media_type: "application/x-ndjson"
+    schema_ref: "#/components/schemas/AuditEvent"
+  legacy_signals:
+    path: "results/signals_<YYYY-MM-DD>.json"
+    media_type: "application/json"
+    schema_ref: "#/components/schemas/LegacySignalArtifact"
+  legacy_report:
+    path: "results/report_<YYYY-MM-DD>.txt"
+    media_type: "text/plain"
+    contract: "UTF-8 five-section text report with the investment-risk disclaimer; no machine-readable field schema."
+  legacy_dashboard:
+    path: "results/dashboard_<YYYY-MM-DD>.html"
+    media_type: "text/html"
+    contract: "Self-contained HTML with a disclaimer. Vendor-derived name/code/rejection text is currently not HTML-escaped; see P-016."
+
+config_contracts:
+  BacktestCostConfig:
+    schema_ref: "#/components/schemas/BacktestCostConfig"
+  PaperStrategyConfig:
+    schema_ref: "#/components/schemas/PaperStrategyConfig"
+  EnvironmentConfig:
+    schema_ref: "#/components/schemas/EnvironmentConfig"
+  StrategyConfigSchemas:
+    files:
+      - "src/quant_agent/strategies/tail_momentum/config.schema.json"
+      - "src/quant_agent/strategies/trend_breakout/config.schema.json"
+      - "src/quant_agent/strategies/mean_reversion/config.schema.json"
+      - "src/quant_agent/strategies/low_vol_quality/config.schema.json"
+      - "src/quant_agent/strategies/industry_rotation/config.schema.json"
+    contract: "JSON Schema Draft 2020-12; unknown keys are rejected by the plugin validator."
+
+error_codes:
+  data:
+    - MISSING_REQUIRED_BAR
+  order:
+    - INSTRUMENT_NOT_ACTIVE
+    - NON_TRADING_DAY
+    - OUTSIDE_CONTINUOUS_AUCTION
+    - OUTSIDE_AFTER_HOURS_SUBMISSION_WINDOW
+    - SUSPENDED
+    - T1_UNSETTLED
+    - INVALID_LOT
+    - INVALID_TICK
+    - PRICE_BAND
+    - LIMIT_UP
+    - LIMIT_DOWN
+    - INVALID_AFTER_HOURS_PRICE
+    - INSUFFICIENT_CASH
+    - BOARD_QUEUE_UNFILLED
+    - INVALID_PRICE
+  portfolio:
+    - STRATEGY_BLOCKED
+    - SINGLE_POSITION_LIMIT
+    - INDUSTRY_LIMIT
+    - LIQUIDITY_LIMIT
+    - DRAWDOWN_FUSE
+    - BLACKLIST
+    - TOTAL_POSITION_LIMIT
+    - CORRELATION_BUDGET
+  agent:
+    - AGENT_ROLE_UNKNOWN
+    - ROLE_TOOL_NOT_ALLOWED
+    - TOOL_NOT_ALLOWED
+    - BLOCK_CANNOT_BE_SKIPPED
+    - TOOL_FAILED
+    - audit_write_failed
+
+components:
+  schemas:
+    DecimalString:
+      type: string
+      pattern: "^-?[0-9]+(\\.[0-9]+)?$"
+
+    Instrument:
+      type: object
+      additionalProperties: false
+      required: [symbol, exchange, board, status, listing_date, tick, lot_size]
+      properties:
+        symbol:
+          type: string
+          minLength: 1
+        exchange:
+          type: string
+          enum: [SSE, SZSE]
+        board:
+          type: string
+          enum: [MainBoard, STAR, ChiNext]
+        status:
+          type: string
+          minLength: 1
+        listing_date:
+          type: string
+          format: date
+        tick:
+          $ref: "#/components/schemas/DecimalString"
+        lot_size:
+          type: integer
+          minimum: 1
+
+    Bar:
+      type: object
+      additionalProperties: false
+      required:
+        [instrument, timestamp, open, high, low, close, volume, available_at]
+      properties:
+        instrument:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        open:
+          type: number
+        high:
+          type: number
+        low:
+          type: number
+        close:
+          type: number
+        volume:
+          type: number
+        amount:
+          type: number
+          default: 0
+        available_at:
+          type: string
+          format: date-time
+        adjustment:
+          type: string
+          enum: [raw, qfq, hfq]
+
+    BarCsv:
+      type: object
+      required: [instrument, timestamp, open, high, low, close, volume]
+      properties:
+        instrument:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        open:
+          type: number
+        high:
+          type: number
+        low:
+          type: number
+        close:
+          type: number
+        volume:
+          type: number
+        amount:
+          type: number
+        available_at:
+          type: string
+          format: date-time
+
+    Signal:
+      type: object
+      additionalProperties: false
+      required:
+        [strategy_id, version, symbol, side, target_weight, confidence, valid_from, valid_to]
+      properties:
+        strategy_id:
+          type: string
+          minLength: 1
+        version:
+          type: string
+          minLength: 1
+        symbol:
+          type: string
+          minLength: 1
+        side:
+          type: string
+          enum: [long, short]
+        target_weight:
+          type: number
+          minimum: -1
+          maximum: 1
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        valid_from:
+          type: string
+          format: date-time
+        valid_to:
+          type: string
+          format: date-time
+        evidence:
+          type: object
+          additionalProperties: true
+          default: {}
+
+    Order:
+      type: object
+      additionalProperties: false
+      required: [id, symbol, side, quantity, limit_price, created_at]
+      properties:
+        id:
+          type: string
+          minLength: 1
+        symbol:
+          type: string
+          minLength: 1
+        side:
+          type: string
+          enum: [buy, sell]
+        quantity:
+          type: integer
+          minimum: 1
+        limit_price:
+          $ref: "#/components/schemas/DecimalString"
+        created_at:
+          type: string
+          format: date-time
+        session:
+          type: string
+          enum: [continuous, after_hours_fixed]
+          default: continuous
+
+    MarketSnapshot:
+      type: object
+      additionalProperties: false
+      required: [instrument, last, previous_close]
+      properties:
+        instrument:
+          $ref: "#/components/schemas/Instrument"
+        last:
+          $ref: "#/components/schemas/DecimalString"
+        previous_close:
+          $ref: "#/components/schemas/DecimalString"
+        tradable:
+          type: boolean
+          default: true
+        board_volume:
+          oneOf:
+            - $ref: "#/components/schemas/DecimalString"
+            - type: "null"
+
+    RunManifest:
+      type: object
+      additionalProperties: false
+      required: [run_id, git_sha, config_hash, data_snapshot, seed, created_at, content_hash]
+      properties:
+        run_id:
+          type: string
+        git_sha:
+          type: string
+        config_hash:
+          type: string
+        data_snapshot:
+          type: string
+        seed:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        content_hash:
+          type: string
+
+    QualityEvent:
+      type: object
+      additionalProperties: false
+      required: [level, reason_code, symbol, as_of, message]
+      properties:
+        level:
+          type: string
+          enum: [pass, warn, block]
+        reason_code:
+          type: string
+        symbol:
+          type: string
+        as_of:
+          type: string
+          format: date-time
+        message:
+          type: string
+        strategy_id:
+          type: string
+
+    ApprovalRecord:
+      type: object
+      additionalProperties: false
+      required: [strategy_id, config_hash, approved_by]
+      properties:
+        strategy_id:
+          type: string
+        config_hash:
+          type: string
+        approved_by:
+          type: string
+
+    ApprovalLedger:
+      type: array
+      items:
+        $ref: "#/components/schemas/ApprovalRecord"
+
+    StrategyList:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [strategy_id, version, frequency]
+        properties:
+          strategy_id:
+            type: string
+          version:
+            type: string
+          frequency:
+            type: string
+            enum: [daily, intraday, event]
+
+    BacktestCostConfig:
+      type: object
+      additionalProperties: true
+      required: [initial_cash]
+      properties:
+        initial_cash:
+          $ref: "#/components/schemas/DecimalString"
+        buy_quantity:
+          type: integer
+          minimum: 1
+          default: 100
+        commission_rate:
+          $ref: "#/components/schemas/DecimalString"
+          default: "0.0003"
+        stamp_tax_rate:
+          $ref: "#/components/schemas/DecimalString"
+          default: "0.0005"
+        slippage_rate:
+          $ref: "#/components/schemas/DecimalString"
+          default: "0.001"
+        fill_model:
+          type: string
+          enum: [slippage, next_open, vwap]
+          default: slippage
+
+    PaperStrategyConfig:
+      type: object
+      additionalProperties: true
+      required: [config_hash, universe]
+      properties:
+        config_hash:
+          type: string
+          minLength: 1
+        universe:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        session:
+          type: string
+          enum: [continuous, after_hours_fixed]
+          default: continuous
+        market:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              last:
+                $ref: "#/components/schemas/DecimalString"
+              previous_close:
+                $ref: "#/components/schemas/DecimalString"
+              tradable:
+                type: boolean
+              board_volume:
+                $ref: "#/components/schemas/DecimalString"
+        execution:
+          type: object
+          properties:
+            exchange:
+              type: string
+              enum: [SSE, SZSE]
+              default: SSE
+            initial_cash:
+              $ref: "#/components/schemas/DecimalString"
+              default: "100000.00"
+            commission_rate:
+              $ref: "#/components/schemas/DecimalString"
+              default: "0.0003"
+            stamp_tax_rate:
+              $ref: "#/components/schemas/DecimalString"
+              default: "0.0005"
+            slippage_rate:
+              $ref: "#/components/schemas/DecimalString"
+              default: "0.001"
+            buy_quantity:
+              type: integer
+              default: 100
+            instruments:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/Instrument"
+
+    EnvironmentConfig:
+      type: object
+      additionalProperties: false
+      required: [environment, defaults]
+      properties:
+        environment:
+          type: string
+          enum: [dev, research, paper, prod]
+        defaults:
+          type: object
+          additionalProperties: false
+          properties:
+            dry_run:
+              type: boolean
+            require_approval:
+              type: boolean
+            approvals_path:
+              type: string
+            log_level:
+              type: string
+              enum: [DEBUG, INFO, WARNING, ERROR]
+            audit_sink:
+              type: string
+              enum: [memory, jsonl]
+            audit_path:
+              type: string
+            note:
+              type: string
+
+    AuditEvent:
+      type: object
+      additionalProperties: false
+      required: [run_id, manifest_hash, agent_id, tool, status]
+      properties:
+        run_id:
+          type: string
+        manifest_hash:
+          type: string
+        agent_id:
+          type: string
+        tool:
+          type: string
+        status:
+          type: string
+          enum: [allowed, denied, audit_write_failed]
+        occurred_at:
+          type: [string, "null"]
+          format: date-time
+        model_id:
+          type: string
+        arguments_sha256:
+          type: string
+        arguments:
+          type: object
+        output:
+          type: [object, "null"]
+        reason_code:
+          type: [string, "null"]
+
+    BacktestOrder:
+      type: object
+      additionalProperties: false
+      required: [id, symbol, side, quantity, status]
+      properties:
+        id:
+          type: string
+        symbol:
+          type: string
+        side:
+          type: string
+          enum: [buy, sell]
+        quantity:
+          type: integer
+        status:
+          type: string
+          enum: [PENDING, FILLED, REJECTED]
+        rejection_code:
+          type: string
+
+    BacktestFill:
+      type: object
+      additionalProperties: false
+      required: [order_id, side, price, quantity, fee, timestamp]
+      properties:
+        order_id:
+          type: string
+        side:
+          type: string
+          enum: [buy, sell]
+        price:
+          $ref: "#/components/schemas/DecimalString"
+        quantity:
+          type: integer
+        fee:
+          $ref: "#/components/schemas/DecimalString"
+        timestamp:
+          type: string
+          format: date-time
+
+    BacktestSummary:
+      type: object
+      additionalProperties: false
+      required:
+        [total_return, max_drawdown, sharpe, sample_frequency, win_rate, turnover, fill_count]
+      properties:
+        total_return:
+          type: number
+        max_drawdown:
+          type: number
+        sharpe:
+          type: number
+        sample_frequency:
+          type: string
+        win_rate:
+          type: number
+        turnover:
+          type: number
+        fill_count:
+          type: integer
+        excess_return:
+          type: number
+
+    BacktestReport:
+      type: object
+      additionalProperties: false
+      required: [orders, fills, summary]
+      properties:
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestOrder"
+        fills:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestFill"
+        summary:
+          $ref: "#/components/schemas/BacktestSummary"
+        benchmark:
+          type: object
+          additionalProperties: false
+          required: [symbol, return]
+          properties:
+            symbol:
+              type: string
+            return:
+              type: number
+
+    BacktestEnvelope:
+      oneOf:
+        - $ref: "#/components/schemas/BacktestReport"
+        - type: object
+          additionalProperties: false
+          required: [in_sample, out_of_sample]
+          properties:
+            in_sample:
+              $ref: "#/components/schemas/BacktestReport"
+            out_of_sample:
+              $ref: "#/components/schemas/BacktestReport"
+        - type: object
+          additionalProperties: false
+          required: [windows]
+          properties:
+            windows:
+              type: array
+              items:
+                $ref: "#/components/schemas/BacktestReport"
+
+    PaperOrder:
+      type: object
+      additionalProperties: false
+      required: [order_id, symbol, side, quantity, price, fee, status, timestamp]
+      properties:
+        order_id:
+          type: string
+        symbol:
+          type: string
+        side:
+          type: string
+          enum: [buy, sell]
+        quantity:
+          type: integer
+        price:
+          $ref: "#/components/schemas/DecimalString"
+        fee:
+          $ref: "#/components/schemas/DecimalString"
+        status:
+          type: string
+          enum: [FILLED, REJECTED, QUEUED_AFTER_HOURS, EXPIRED]
+        reason_code:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        submitted_at:
+          type: string
+          format: date-time
+
+    PaperMinimalOrder:
+      type: object
+      additionalProperties: false
+      required: [symbol, side, quantity, status]
+      properties:
+        order_id: false
+        symbol:
+          type: string
+        side:
+          type: string
+          enum: [buy, sell]
+        quantity:
+          type: integer
+        status:
+          type: string
+          enum: [FILLED, REJECTED, QUEUED_AFTER_HOURS, EXPIRED]
+
+    PaperOrderEntry:
+      description: "CLI passes injected PaperExecution results through verbatim; default SimulatedPaperExecution emits PaperOrder."
+      if:
+        required: [order_id]
+      then:
+        $ref: "#/components/schemas/PaperOrder"
+      else:
+        $ref: "#/components/schemas/PaperMinimalOrder"
+
+    PaperRunOutput:
+      type: object
+      additionalProperties: false
+      required: [strategy_id, config_hash, status, orders]
+      properties:
+        strategy_id:
+          type: string
+        config_hash:
+          type: string
+        status:
+          type: string
+          enum: [DRY_RUN, PAPER_EXECUTED]
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaperOrderEntry"
+
+    AgentReviewOutput:
+      type: object
+      additionalProperties: false
+      required: [total, by_status, by_agent, denials]
+      properties:
+        total:
+          type: integer
+        by_status:
+          type: object
+          additionalProperties:
+            type: integer
+        by_agent:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: integer
+        denials:
+          type: array
+          items:
+            type: object
+            properties:
+              agent_id:
+                type: string
+              tool:
+                type: string
+              reason_code:
+                type: [string, "null"]
+              occurred_at:
+                type: [string, "null"]
+
+    LegacySignalArtifact:
+      type: object
+      additionalProperties: false
+      required:
+        [date, snapshot, env_label, env_points, threshold, candidates, excluded_count]
+      properties:
+        date:
+          type: string
+          format: date
+        snapshot:
+          type: string
+          pattern: "^[0-2][0-9][0-5][0-9]$"
+        env_label:
+          type: string
+        env_points:
+          type: number
+        threshold:
+          type: number
+        candidates:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, name, total, snapshot_close, day_chg_pct]
+            properties:
+              code:
+                type: string
+              name:
+                type: string
+              total:
+                type: number
+              snapshot_close:
+                type: number
+              day_chg_pct:
+                type: number
+        excluded_count:
+          type: integer
+          minimum: 0
