@@ -11,8 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping
 
-from quant_agent.adapters.market_data import DataUnavailable, MarketDataPortLike
-from quant_agent.domain.clock import Clock, SystemClock
+from quant_agent.ports.market_data import DataUnavailable, MarketDataPortLike
+from quant_agent.ports.clock import Clock, SystemClock
 
 
 DISCLAIMER = (

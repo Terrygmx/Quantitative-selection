@@ -13,7 +13,7 @@ from typing import Any, Mapping
 from jsonschema import Draft202012Validator
 
 from quant_agent.agents.roles import AgentRole
-from quant_agent.domain.clock import Clock, SystemClock
+from quant_agent.ports.clock import Clock, SystemClock
 from quant_agent.domain.models import RunManifest
 
 

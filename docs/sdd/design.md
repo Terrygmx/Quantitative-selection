@@ -1,6 +1,6 @@
 # A 股多策略 Agent 量化平台：系统设计
 
-> 文档版本：1.0.6
+> 文档版本：1.0.7
 > 基线日期：2026-10-29
 > 对应提案：`docs/sdd/proposal.md` 1.0.5
 > 最后复核：2026-11-08
@@ -71,22 +71,24 @@ adapters     ← application/cli（只通过端口或稳定数据模型）
 - `adapters` 负责供应商、文件格式、CLI 和持久化细节。
 - `cli` 只做参数解析、依赖组装、JSON/文本输出和退出码映射。
 
-### 2.2 当前实现中的边界例外
+### 2.2 端口边界
 
-以下例外已识别，不应被后续代码继续扩散：
+`ports` 包只承载跨层协议、端口数据契约和端口异常：
 
-1. `src/quant_agent/application/intraday.py` 直接导入 `src/quant_agent/adapters/market_data.py` 的 `DataUnavailable`。后续应把异常和数据端口协议提取到 `ports`。
-2. `src/quant_agent/strategies/context.py` 的类型标注指向 `InMemoryMarketDataPort`，实际应使用结构化 `MarketDataPortLike` 协议。
-
-对应任务：`P-006`。
+- `ports.market_data` 定义 `MarketDataPort`、`Bar`、`QualityEvent` 和 `DataUnavailable`。
+- `ports.clock` 定义 `Clock`、`SystemClock` 和 `FixedClock`。
+- `application` 与 `strategies` 只依赖端口或领域模型，不得直接导入 `adapters.market_data`。
+- 适配器实现端口契约，并可从旧模块路径兼容导出，但对外新代码使用 `ports`。
 
 ## 3. 模块地图
 
 ```text
 src/quant_agent/
+  ports/
+    market_data.py  # MarketDataPort、Bar、QualityEvent、DataUnavailable
+    clock.py        # Clock、SystemClock、FixedClock
   domain/
-    models.py       # Instrument、Signal、Order、RunManifest（Bar 定义在 adapters/market_data.py）
-    clock.py        # Clock, SystemClock, FixedClock
+    models.py       # Instrument、Signal、Order、RunManifest
   rules/
     calendar.py     # 交易日历协议、静态 2023–2026、外部文件日历
     trading.py      # 交易时段、涨跌停、T+1、整手、tick、盘后定价
@@ -568,7 +570,6 @@ model_id, arguments_sha256, arguments, output, reason_code
 | G-02 | 策略插件未接入模拟盘 | 模拟盘只验证成交通道 | P-002 |
 | G-04 | 质量事件未接入生产管线 | `block` 尚未自动阻断实际运行 | P-004 |
 | G-05 | RunManifest/审计未强制写产物 | 运行级追溯不完整 | P-005 |
-| G-06 | 端口协议未独立成 `ports` 包 | application 存在 adapter 依赖例外 | P-006 |
 | G-07 | 环境配置未统一加载 | CLI 行为与声明环境可能不一致 | P-007 |
 | G-08 | 高级成交参数未全部暴露到 CLI | Python API 与 CLI 能力不一致 | P-008 |
 | G-09 | 模拟盘账本与运行历史未持久化 | 进程退出后无法恢复 paper account | P-013 |
@@ -582,6 +583,8 @@ model_id, arguments_sha256, arguments, output, reason_code
 | 设计约束 | 测试证据 |
 |---|---|
 | PIT 可见性 | `tests/contract/test_market_data_port.py` |
+| 端口结构契约 | `tests/contract/test_ports.py` |
+| 分层边界 | `tests/unit/architecture/test_boundaries.py` |
 | 分钟频防未来 | `tests/unit/backtest/test_minute_engine.py` |
 | A 股规则 | `tests/unit/rules/test_trading_rules.py` |
 | 共享成交 | `tests/unit/application/test_execution_core.py`、`tests/unit/backtest/test_execution_equivalence.py` |

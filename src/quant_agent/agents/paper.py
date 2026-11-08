@@ -12,7 +12,7 @@ from quant_agent.application.execution import (
     ExecutionOutcome,
     ExecutionPosition,
 )
-from quant_agent.domain.clock import Clock, SystemClock
+from quant_agent.ports.clock import Clock, SystemClock
 from quant_agent.domain.models import Instrument, Order
 from quant_agent.rules.trading import (
     MarketSnapshot,

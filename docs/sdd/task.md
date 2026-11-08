@@ -1,6 +1,6 @@
 # A 股多策略 Agent 量化平台：任务清单
 
-> 文档版本：1.0.6
+> 文档版本：1.0.7
 > 基线日期：2026-10-29
 > 基线提交：`7052b7e`
 > 最后复核：2026-11-08
@@ -268,7 +268,7 @@ python3 -m py_compile src/tail_momentum_selector.py $(find src/quant_agent -name
 - 证据：
   - `tests/unit/portfolio/test_signal_adapter.py` 覆盖保留版本/evidence、有效期校验、行业缺失/冲突、重复信号、拒绝决策追溯和 `compose_domain` 多策略权重。
   - `docs/sdd/design.md` 新增 `SignalAdapter` 契约；`docs/sdd/api-spec.yaml` 新增 `ComposerSignal`、`SignalAdapterResult`、`TargetPosition`、`RiskDecision`、`CompositionResult` 契约。
-  - 本次验证：`417 passed, 1 skipped`，覆盖率 `93%`；Ruff/Mypy/源码编译通过；YAML 唯一键解析和 32 个 Schema 语法通过，`$ref` 目标缺失为 0。
+  - 本次验证：`426 passed, 1 skipped`，覆盖率 `93%`；Ruff/Mypy/源码编译通过；YAML 唯一键解析和 32 个 Schema 语法通过，`$ref` 目标缺失为 0。
 
 ### P-004 质量门接入生产管线
 
@@ -302,7 +302,11 @@ python3 -m py_compile src/tail_momentum_selector.py $(find src/quant_agent -name
   2. `StrategyContext` 使用协议而非具体 InMemory 实现。
   3. 端口契约测试不依赖具体适配器。
   4. `docs/sdd/design.md` 的依赖方向与实际 import 一致。
-- 状态：`[ ]`
+- 状态：`[x]`
+- 证据：
+  - `tests/contract/test_ports.py` 和 `tests/contract/test_clock.py` 使用适配器无关 fake 覆盖端口结构、PIT 可见性、缺数据 fail closed、`Bar` 可见性不变量和时钟契约。
+  - `tests/unit/architecture/test_boundaries.py` 以 AST 检查 `application` 与 `strategies` 不得导入 `adapters.market_data`。
+  - 旧路径 `quant_agent.adapters.market_data` 与 `quant_agent.domain.clock` 保留兼容导出。
 
 ### P-007 统一环境配置加载
 
@@ -447,7 +451,7 @@ python3 -m py_compile src/tail_momentum_selector.py $(find src/quant_agent -name
 | P-003 | SC-06、AC-06 | 插件契约 | `SignalAdapter`、`ComposerSignal`、`SignalAdapterResult`、`TargetPosition`、`CompositionResult` | `tests/unit/portfolio/test_signal_adapter.py` |
 | P-004 | SC-01、AC-01 | G-04、质量门 | `QualityEvent` 管线契约 | 各任务完成后回写 |
 | P-005 | SC-11、AC-11 | G-05、可观测性 | `RunManifest` 产物契约 | 各任务完成后回写 |
-| P-006 | SC-11 | G-06、依赖方向/ADR-002 | `ports` 协议契约 | 各任务完成后回写 |
+| P-006 | SC-11 | 依赖方向/ADR-002 | `ports.market_data`、`ports.clock` | `tests/contract/test_ports.py`、`tests/contract/test_clock.py`、`tests/unit/architecture/test_boundaries.py` |
 | P-007 | SC-10、AC-10 | G-07、四环境 | `EnvironmentConfig` CLI 契约 | 各任务完成后回写 |
 | P-008 | SC-04、AC-04 | G-08、ADR-003 | `BacktestCostConfig` CLI 契约 | 各任务完成后回写 |
 | P-009 | SC-01、AC-01 | NFR 性能、分钟频防未来 | 分钟频基准与 1430 用例 | 各任务完成后回写 |
@@ -515,5 +519,6 @@ P-012 ← P-001, P-002, P-003, P-004, P-005, P-006, P-007, P-008, P-009, P-010, 
 | 2026-11-08 | 1.0.4 | 按第二轮评审补齐退出码、null 审计输出、追溯矩阵、路径和行尾空格修正 |
 | 2026-11-08 | 1.0.5 | 按第三轮评审统一 per-command 退出码、G-10 映射与测试路径 |
 | 2026-11-08 | 1.0.6 | 完成 P-003：Signal 适配、有效期/行业 fail closed、策略追溯、类型化 ComposerSignal 与评审修正 |
+| 2026-11-08 | 1.0.7 | 完成 P-006：提取 ports 包并消除 adapter 边界例外 |
 
 > 研究产物，不构成任何投资建议或个股推荐。投资有风险，决策需谨慎。

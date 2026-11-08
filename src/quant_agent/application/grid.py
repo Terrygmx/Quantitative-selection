@@ -16,7 +16,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Mapping
 
-from quant_agent.adapters.market_data import DataUnavailable
+from quant_agent.ports.market_data import DataUnavailable
 from quant_agent.application.backtest import FillRecord, MultiInstrumentEvent
 from quant_agent.application.execution import ExecutionCore, ExecutionCosts
 from quant_agent.domain.models import Instrument, Order

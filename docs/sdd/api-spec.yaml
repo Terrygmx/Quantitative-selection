@@ -3,7 +3,7 @@
 # service. It defines CLI operations, Python protocols, configs and artifacts.
 contract:
   name: quant-agent
-  version: "1.0.6"
+  version: "1.0.7"
   status: implemented-baseline-and-evolving
   updated_at: "2026-11-08"
   reviewed_at: "2026-11-08"
@@ -299,11 +299,11 @@ entrypoints:
   python:
     protocols:
       Clock:
-        module: "quant_agent.domain.clock"
+        module: "quant_agent.ports.clock"
         method: "now() -> datetime"
         contract: "Returns a timezone-aware datetime."
       MarketDataPortLike:
-        module: "quant_agent.adapters.market_data"
+        module: "quant_agent.ports.market_data"
         symbol: "MarketDataPortLike"
         method: "bars(instrument: str, as_of: datetime) -> list[Bar]"
         contract: "Returns only visible revisions; raises DataUnavailable when no visible bar exists."
@@ -313,7 +313,7 @@ entrypoints:
         attributes:
           metadata: "StrategyMetadata"
         method: "on_snapshot(context: Any) -> Sequence[object]"
-        contract: "Current protocol annotation is object-valued; concrete plugins return Signal lists. Reading only context.as_of-visible data is the platform invariant. Sequence[Signal] is a target contract (P-006)."
+        contract: "Current protocol annotation is object-valued; concrete plugins return Signal lists. Reading only context.as_of-visible data is the platform invariant."
       SignalAdapter:
         module: "quant_agent.application.portfolio"
         symbol: "SignalAdapter"

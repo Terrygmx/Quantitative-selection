@@ -12,7 +12,7 @@ from decimal import Decimal
 from typing import Mapping
 from zoneinfo import ZoneInfo
 
-from quant_agent.adapters.market_data import DataUnavailable
+from quant_agent.ports.market_data import DataUnavailable
 from quant_agent.application.backtest import BacktestConfig, FillRecord, MultiInstrumentEvent
 from quant_agent.application.execution import ExecutionCore
 from quant_agent.domain.models import Instrument, Order

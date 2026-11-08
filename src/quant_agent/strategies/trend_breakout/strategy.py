@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Iterable, Mapping, Sequence
 
-from quant_agent.adapters.market_data import Bar
+from quant_agent.ports.market_data import Bar
 from quant_agent.domain.models import Signal
 from quant_agent.strategies.context import StrategyContext
 from quant_agent.strategies.registry import StrategyMetadata

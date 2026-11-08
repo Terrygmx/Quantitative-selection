@@ -15,12 +15,8 @@ from datetime import date, datetime, time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from quant_agent.adapters.market_data import (
-    Bar,
-    DataUnavailable,
-    QualityEvent,
-    QualityEventCollector,
-)
+from quant_agent.adapters.market_data import QualityEventCollector
+from quant_agent.ports.market_data import Bar, DataUnavailable, QualityEvent
 
 
 CN_MARKET_TZ = ZoneInfo("Asia/Shanghai")

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Iterable, Sequence
 from zoneinfo import ZoneInfo
 
-from quant_agent.adapters.market_data import Bar
+from quant_agent.ports.market_data import Bar
 
 
 CN_MARKET_TZ = ZoneInfo("Asia/Shanghai")
