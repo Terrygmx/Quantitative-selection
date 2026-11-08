@@ -1,6 +1,6 @@
 # A 股多策略 Agent 量化平台：任务清单
 
-> 文档版本：1.0.5
+> 文档版本：1.0.6
 > 基线日期：2026-10-29
 > 基线提交：`7052b7e`
 > 最后复核：2026-11-08
@@ -264,7 +264,11 @@ python3 -m py_compile src/tail_momentum_selector.py $(find src/quant_agent -name
   2. 过期信号被拒绝或忽略，并产生明确原因码。
   3. 多个策略的同一标的权重可追溯。
   4. 适配器有单元测试和 API 文档。
-- 状态：`[ ]`
+- 状态：`[x]`
+- 证据：
+  - `tests/unit/portfolio/test_signal_adapter.py` 覆盖保留版本/evidence、有效期校验、行业缺失/冲突、重复信号、拒绝决策追溯和 `compose_domain` 多策略权重。
+  - `docs/sdd/design.md` 新增 `SignalAdapter` 契约；`docs/sdd/api-spec.yaml` 新增 `ComposerSignal`、`SignalAdapterResult`、`TargetPosition`、`RiskDecision`、`CompositionResult` 契约。
+  - 本次验证：`417 passed, 1 skipped`，覆盖率 `93%`；Ruff/Mypy/源码编译通过；YAML 唯一键解析和 32 个 Schema 语法通过，`$ref` 目标缺失为 0。
 
 ### P-004 质量门接入生产管线
 
@@ -440,7 +444,7 @@ python3 -m py_compile src/tail_momentum_selector.py $(find src/quant_agent -name
 | T-110～T-130 | SC-09～SC-10、AC-09～AC-10 | 报告安全、四环境、质量闸门 | `AgentReviewOutput`、HTML 契约、`EnvironmentConfig` | reporting/config/CI 证据 |
 | P-001 | SC-01～SC-04、AC-01～AC-04 | G-01、ADR-002/003/007 | 端到端回测契约（待新增） | 各任务完成后回写 |
 | P-002 | SC-08、AC-08 | G-02、ADR-005/007 | `paper.run` 扩展契约 | 各任务完成后回写 |
-| P-003 | SC-06、AC-06 | G-03、插件契约 | `Signal` 到组合层适配契约 | 各任务完成后回写 |
+| P-003 | SC-06、AC-06 | 插件契约 | `SignalAdapter`、`ComposerSignal`、`SignalAdapterResult`、`TargetPosition`、`CompositionResult` | `tests/unit/portfolio/test_signal_adapter.py` |
 | P-004 | SC-01、AC-01 | G-04、质量门 | `QualityEvent` 管线契约 | 各任务完成后回写 |
 | P-005 | SC-11、AC-11 | G-05、可观测性 | `RunManifest` 产物契约 | 各任务完成后回写 |
 | P-006 | SC-11 | G-06、依赖方向/ADR-002 | `ports` 协议契约 | 各任务完成后回写 |
@@ -510,5 +514,6 @@ P-012 ← P-001, P-002, P-003, P-004, P-005, P-006, P-007, P-008, P-009, P-010, 
 | 2026-11-08 | 1.0.3 | 完成契约自检：27 Schema / 33 引用 / 17 个 P 任务 / CLI 参数与产物样例全部通过 |
 | 2026-11-08 | 1.0.4 | 按第二轮评审补齐退出码、null 审计输出、追溯矩阵、路径和行尾空格修正 |
 | 2026-11-08 | 1.0.5 | 按第三轮评审统一 per-command 退出码、G-10 映射与测试路径 |
+| 2026-11-08 | 1.0.6 | 完成 P-003：Signal 适配、有效期/行业 fail closed、策略追溯、类型化 ComposerSignal 与评审修正 |
 
 > 研究产物，不构成任何投资建议或个股推荐。投资有风险，决策需谨慎。

@@ -1,6 +1,6 @@
 # A 股多策略 Agent 量化平台：系统设计
 
-> 文档版本：1.0.5
+> 文档版本：1.0.6
 > 基线日期：2026-10-29
 > 对应提案：`docs/sdd/proposal.md` 1.0.5
 > 最后复核：2026-11-08
@@ -77,9 +77,8 @@ adapters     ← application/cli（只通过端口或稳定数据模型）
 
 1. `src/quant_agent/application/intraday.py` 直接导入 `src/quant_agent/adapters/market_data.py` 的 `DataUnavailable`。后续应把异常和数据端口协议提取到 `ports`。
 2. `src/quant_agent/strategies/context.py` 的类型标注指向 `InMemoryMarketDataPort`，实际应使用结构化 `MarketDataPortLike` 协议。
-3. `SignalComposer` 接收映射而非 `Signal` 领域对象，需要适配层统一证据、行业和有效期。
 
-对应任务：`P-003`、`P-006`。
+对应任务：`P-006`。
 
 ## 3. 模块地图
 
@@ -103,6 +102,7 @@ src/quant_agent/
     data_layers.py  # RawStore, CuratedStore
     features.py     # FeatureStore, PersistentFeatureStore
     runs.py         # RunManifestFactory
+    portfolio.py    # SignalAdapter、SignalComposer、组合风险约束
   adapters/
     market_data.py  # 内存/CSV/Parquet/DuckDB PIT 端口与质量事件
     westock.py      # westock Markdown/缓存/在线适配器
@@ -187,6 +187,9 @@ StrategyRegistry
 Strategy Plugin
     │ list[Signal]
     ▼
+SignalAdapter
+    │ ComposerSignal + adapter RiskDecision
+    ▼
 SignalComposer
     │ TargetPosition + RiskDecision
     ▼
@@ -217,6 +220,16 @@ class Strategy(Protocol):
 | `mean_reversion_liquid` | daily | MA5 相对超跌、MA20 上方、流动性门槛 |
 | `low_vol_quality` | daily | 低已实现波动、长均线上方、流动性门槛 |
 | `industry_rotation` | daily | 行业代理动量排序，取正动量 Top-N |
+
+`SignalAdapter` 是 `Signal` 进入组合层的唯一适配入口：
+
+- 必须以关键字参数传入决策时刻 `as_of`，按 `valid_from <= as_of < valid_to` 过滤；未生效和过期信号分别产生 `SIGNAL_NOT_YET_VALID`、`SIGNAL_EXPIRED` 决策。
+- 行业必须来自 `Signal.evidence["industry"]` 且为非空字符串；缺失时 fail closed，产生 `INDUSTRY_MISSING` 决策；输出行业去除首尾空白。
+- 同一标的不同策略提供不同行业时，相关信号 fail closed，产生 `INDUSTRY_CONFLICT` 决策。
+- 同一 `(strategy_id, symbol)` 只允许一条信号；重复时所有相关信号都产生 `DUPLICATE_STRATEGY_SIGNAL` 决策，避免覆盖权重导致追溯断裂。
+- 适配后的输入保留 `strategy_id`、`version`、`symbol`、`side`、目标权重、有效期和 evidence；有效期为 ISO-8601 字符串。
+- 适配决策携带 `strategy_id` 和 `version`，用于追溯被拒绝的信号。
+- `SignalComposer.compose_domain()` 返回目标仓位、组合决策和适配决策；目标仓位额外携带每个策略的版本与 evidence。调用方 `as_of` 同时用于组合层时间敏感约束，不回退到 `max(valid_from)`。
 
 ### 5.3 回测
 
@@ -553,7 +566,6 @@ model_id, arguments_sha256, arguments, output, reason_code
 |---|---|---|---|
 | G-01 | 策略插件未接入回测 CLI | 无法端到端验证策略收益 | P-001 |
 | G-02 | 策略插件未接入模拟盘 | 模拟盘只验证成交通道 | P-002 |
-| G-03 | `Signal` 与 Composer 输入不一致 | 组合层需要手工映射 | P-003 |
 | G-04 | 质量事件未接入生产管线 | `block` 尚未自动阻断实际运行 | P-004 |
 | G-05 | RunManifest/审计未强制写产物 | 运行级追溯不完整 | P-005 |
 | G-06 | 端口协议未独立成 `ports` 包 | application 存在 adapter 依赖例外 | P-006 |
@@ -574,6 +586,7 @@ model_id, arguments_sha256, arguments, output, reason_code
 | A 股规则 | `tests/unit/rules/test_trading_rules.py` |
 | 共享成交 | `tests/unit/application/test_execution_core.py`、`tests/unit/backtest/test_execution_equivalence.py` |
 | 组合风控 | `tests/unit/portfolio/test_composer.py` |
+| Signal 适配契约 | `tests/unit/portfolio/test_signal_adapter.py` |
 | 插件生命周期 | `tests/unit/strategies/test_registry.py`、`tests/unit/strategies/test_plugin_isolation.py` |
 | Agent 边界 | `tests/unit/agents/test_gateway.py`、`tests/unit/agents/test_agent_roles.py` |
 | 模拟盘审批 | `tests/unit/agents/test_paper_cli.py` |

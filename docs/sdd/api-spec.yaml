@@ -3,9 +3,9 @@
 # service. It defines CLI operations, Python protocols, configs and artifacts.
 contract:
   name: quant-agent
-  version: "1.0.5"
-  status: implemented-baseline
-  updated_at: "2026-10-29"
+  version: "1.0.6"
+  status: implemented-baseline-and-evolving
+  updated_at: "2026-11-08"
   reviewed_at: "2026-11-08"
   compatibility: "Additive changes are allowed in 1.x; breaking changes require a major version."
   scope:
@@ -313,7 +313,19 @@ entrypoints:
         attributes:
           metadata: "StrategyMetadata"
         method: "on_snapshot(context: Any) -> Sequence[object]"
-        contract: "Current protocol annotation is object-valued; concrete plugins return Signal lists. Reading only context.as_of-visible data is the platform invariant. Sequence[Signal] is a target contract (P-003/P-006)."
+        contract: "Current protocol annotation is object-valued; concrete plugins return Signal lists. Reading only context.as_of-visible data is the platform invariant. Sequence[Signal] is a target contract (P-006)."
+      SignalAdapter:
+        module: "quant_agent.application.portfolio"
+        symbol: "SignalAdapter"
+        method: "adapt(signals: Sequence[Signal], *, as_of: datetime) -> SignalAdapterResult"
+        contract: "The only Signal-to-Composer bridge. Rejects not-yet-valid/expired signals, missing/conflicting non-empty industry evidence and duplicate (strategy_id, symbol) inputs with explicit RiskDecision reason codes and strategy identity."
+      SignalComposer:
+        module: "quant_agent.application.portfolio"
+        symbol: "SignalComposer"
+        methods:
+          - "compose(signals: list[Mapping[str, object]], blocked_strategies: set[str] | None = None, *, as_of: datetime | None = None) -> CompositionResult"
+          - "compose_domain(signals: Sequence[Signal], *, as_of: datetime, blocked_strategies: set[str] | None = None) -> CompositionResult"
+        contract: "compose_domain uses SignalAdapter, preserves strategy versions/evidence in targets, uses caller as_of for time-sensitive constraints, and combines adapter and portfolio decisions. compose remains the transitional mapping API."
       TradingRulesPlugin:
         module: "quant_agent.rules.trading"
         symbol: "TradingRulesPlugin"
@@ -389,6 +401,11 @@ error_codes:
     - INVALID_PRICE
   portfolio:
     - STRATEGY_BLOCKED
+    - SIGNAL_NOT_YET_VALID
+    - SIGNAL_EXPIRED
+    - INDUSTRY_MISSING
+    - INDUSTRY_CONFLICT
+    - DUPLICATE_STRATEGY_SIGNAL
     - SINGLE_POSITION_LIMIT
     - INDUSTRY_LIMIT
     - LIQUIDITY_LIMIT
@@ -528,6 +545,129 @@ components:
           type: object
           additionalProperties: true
           default: {}
+
+    ComposerSignal:
+      type: object
+      additionalProperties: false
+      required:
+        [strategy_id, version, symbol, side, target_weight, confidence, valid_from, valid_to, industry, evidence]
+      properties:
+        strategy_id:
+          type: string
+          minLength: 1
+        version:
+          type: string
+          minLength: 1
+        symbol:
+          type: string
+          minLength: 1
+        side:
+          type: string
+          enum: [long, short]
+        target_weight:
+          type: number
+          minimum: -1
+          maximum: 1
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        valid_from:
+          type: string
+          format: date-time
+        valid_to:
+          type: string
+          format: date-time
+        industry:
+          type: string
+          minLength: 1
+        evidence:
+          type: object
+          additionalProperties: true
+
+    SignalAdapterResult:
+      type: object
+      additionalProperties: false
+      required: [signals, decisions]
+      properties:
+        signals:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComposerSignal"
+        decisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/RiskDecision"
+
+    TargetPosition:
+      type: object
+      additionalProperties: false
+      required:
+        [symbol, net_weight, contributions, industry, strategy_versions, evidence, status]
+      properties:
+        symbol:
+          type: string
+          minLength: 1
+        net_weight:
+          type: number
+        contributions:
+          type: object
+          additionalProperties:
+            type: number
+        industry:
+          type: string
+          minLength: 1
+        strategy_versions:
+          type: object
+          additionalProperties:
+            type: string
+            minLength: 1
+        evidence:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: true
+        status:
+          type: string
+          enum: [accepted, reduced, rejected]
+        reason_code:
+          type: [string, "null"]
+
+    RiskDecision:
+      type: object
+      additionalProperties: false
+      required: [symbol, status, net_weight, reason_code]
+      properties:
+        symbol:
+          type: string
+          minLength: 1
+        status:
+          type: string
+          enum: [accepted, reduced, rejected]
+        net_weight:
+          type: number
+        reason_code:
+          type: [string, "null"]
+        strategy_id:
+          type: [string, "null"]
+          minLength: 1
+        version:
+          type: [string, "null"]
+          minLength: 1
+
+    CompositionResult:
+      type: object
+      additionalProperties: false
+      required: [targets, decisions]
+      properties:
+        targets:
+          type: array
+          items:
+            $ref: "#/components/schemas/TargetPosition"
+        decisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/RiskDecision"
 
     Order:
       type: object
