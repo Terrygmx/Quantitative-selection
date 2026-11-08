@@ -18,7 +18,7 @@
 - [x] 同一时间戳多修订版本的 PIT 查询已按 `available_at` 取最新可见版本。
 - [x] `QualityEventCollector` 已支持 pass/warn/block 分级校验、JSONL 持久化与按策略隔离查询。
 - [x] Normalized 标准化层（§5.2）：`normalize_bars` 统一代码（歧义前缀强制交易所）、CN 时区、`adjustment` 模式不混用 fail closed、ingested_at 供给可见性。
-- [x] 数据质量 block 联动（FR-2.3/FR-3 硬门槛）：`blocked_strategy_ids()` → `compose(blocked_strategies=...)` 拒绝并审计 `STRATEGY_BLOCKED`；生产管线组装时接入该调用点。
+- [x] 数据质量 block 联动（FR-2.3/FR-3 硬门槛）：策略回测与模拟盘共享 collector，按当前运行事件计算 `blocked_strategy_ids()` 并传入 `compose(blocked_strategies=...)`，拒绝并审计 `STRATEGY_BLOCKED`。
 - [x] 已沉淀 `tests/contract/test_market_data_port.py`；CSV（标准库）、Parquet（可选 `pyarrow`）、DuckDB（可选 `duckdb`，`bars` 表 TIMESTAMPTZ 列）适配器均已按同一契约参数化接入（未来数据不可见、最新可见修订、缺数据 fail closed；文件/库解析按行号 fail closed）。westock 适配器（`adapters/westock.py`）已接入：Markdown 解析与 legacy 在固定夹具及真实缓存上逐字段锁定，`CachedKlineSource` 离线复用 `k_{symbol}.md` 缓存，`WestockCliKlineSource` 在线调用本机二进制（已用真实数据联调），日线收盘 bar 到收盘后才可见。
 
 ## M4 回测器

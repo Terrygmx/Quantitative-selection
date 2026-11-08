@@ -913,7 +913,7 @@ def test_orchestrates_tail_momentum_strategy_end_to_end():
     assert result["summary"]["fill_count"] == 1
 
 
-def test_missing_visible_bar_fails_closed_before_execution():
+def test_missing_visible_bar_blocks_strategy_before_execution():
     class EmptyPort:
         def bars(self, symbol: str, as_of: datetime) -> list[Bar]:
             raise DataUnavailable(
@@ -938,8 +938,18 @@ def test_missing_visible_bar_fails_closed_before_execution():
         as_of=AS_OF,
     )
 
-    with pytest.raises(ValueError, match="strategy plugins failed"):
-        orchestrator.run()
+    result = orchestrator.run()
+
+    assert result["quality_summary"] == {
+        "warn_count": 0,
+        "block_count": 1,
+        "blocked_strategies": ["trend_breakout"],
+    }
+    assert any(
+        decision["reason_code"] == "STRATEGY_BLOCKED"
+        for decision in result["decisions"]
+    )
+    assert result["orders"] == []
 
 
 def test_industry_rotation_strategy_can_be_orchestrated():

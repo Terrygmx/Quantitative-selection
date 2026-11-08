@@ -3,7 +3,7 @@
 # service. It defines CLI operations, Python protocols, configs and artifacts.
 contract:
   name: quant-agent
-  version: "1.0.10"
+  version: "1.0.12"
   status: implemented-baseline-and-evolving
   updated_at: "2026-11-08"
   reviewed_at: "2026-11-08"
@@ -133,7 +133,7 @@ entrypoints:
       exit_codes: [0, 1, 2]
 
     report.show:
-      summary: "Render a Signal JSON array as a text report."
+      summary: "Render a Signal JSON array or report object as a text report."
       invocation:
         - "python3"
         - "-m"
@@ -145,7 +145,7 @@ entrypoints:
         - name: "--file"
           type: path
           required: true
-          description: "JSON array of Signal objects."
+          description: "JSON array of Signal objects, or {signals, quality_events} report object."
       stdout:
         media_type: "text/plain"
         schema:
@@ -793,6 +793,24 @@ components:
           type: string
         strategy_id:
           type: string
+          minLength: 1
+
+    QualitySummary:
+      type: object
+      additionalProperties: false
+      required: [warn_count, block_count, blocked_strategies]
+      properties:
+        warn_count:
+          type: integer
+          minimum: 0
+        block_count:
+          type: integer
+          minimum: 0
+        blocked_strategies:
+          type: array
+          items:
+            type: string
+          uniqueItems: true
 
     ApprovalRecord:
       type: object
@@ -1144,7 +1162,8 @@ components:
     StrategyBacktestOutput:
       type: object
       additionalProperties: false
-      required: [manifest, signals, decisions, targets, orders, fills, summary]
+      required:
+        [manifest, signals, decisions, targets, orders, fills, summary, quality_events, quality_summary]
       properties:
         manifest:
           $ref: "#/components/schemas/RunManifest"
@@ -1170,6 +1189,12 @@ components:
             $ref: "#/components/schemas/BacktestFill"
         summary:
           $ref: "#/components/schemas/BacktestSummary"
+        quality_events:
+          type: array
+          items:
+            $ref: "#/components/schemas/QualityEvent"
+        quality_summary:
+          $ref: "#/components/schemas/QualitySummary"
 
     BacktestEnvelope:
       oneOf:
@@ -1251,7 +1276,7 @@ components:
       type: object
       additionalProperties: false
       required:
-        [strategy_id, strategy_version, config_hash, data_snapshot, read_snapshot, status, manifest, signals, decisions, targets, orders]
+        [strategy_id, strategy_version, config_hash, data_snapshot, read_snapshot, status, manifest, signals, decisions, targets, quality_events, quality_summary, orders]
       properties:
         strategy_id:
           type: string
@@ -1280,6 +1305,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TargetPosition"
+        quality_events:
+          type: array
+          items:
+            $ref: "#/components/schemas/QualityEvent"
+        quality_summary:
+          $ref: "#/components/schemas/QualitySummary"
         orders:
           type: array
           items:

@@ -84,7 +84,7 @@ cli/           paper / strategy / backtest / report / agent 五入口
 2. 深交所静态日历独立逐年复核（历年公告一致，未逐份对深交所原文）。
 3. 分钟频规模化基准（待真实分钟数据规模需求）。
 4. 排队/网格模型的柜台级精细度（部分成交、挂单撤销）——待实盘需求。
-5. 管线组装层接线：`compose(blocked_strategies=collector.blocked_strategy_ids())`（API 已就绪，调用点待建）。
+5. 质量门已在策略回测与模拟盘组装层接线；后续继续接入 `RunManifest`/审计产物（P-005）。
 6. 深化方向（PRD 内）：`Signal` 的置信度/相关性预算已在 composer 有接口，可做多策略实盘组合研究；数据侧可接更多源（照 CSV/Parquet 工厂模式）。
 
 ## 8. 历史速览（十轮循环，详见 git log）

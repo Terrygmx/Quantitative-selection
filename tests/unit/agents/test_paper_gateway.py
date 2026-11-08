@@ -13,6 +13,7 @@ from quant_agent.application.paper_strategy import (
     PaperStrategyPlan,
 )
 from quant_agent.application.portfolio import RiskDecision, TargetPosition
+from quant_agent.application.quality import QualitySummary
 from quant_agent.application.runs import RunManifestFactory
 
 
@@ -56,6 +57,12 @@ def plan(
         targets=targets,
         execution_symbols=symbols,
         source_signal_count=len(signals) if signals else (1 if symbols else 0),
+        quality_events=(),
+        quality_summary=QualitySummary(
+            warn_count=0,
+            block_count=0,
+            blocked_strategies=(),
+        ),
         manifest=manifest,
     )
 

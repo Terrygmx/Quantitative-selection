@@ -1,8 +1,8 @@
 # A 股多策略 Agent 量化平台：系统设计
 
-> 文档版本：1.0.10
+> 文档版本：1.0.12
 > 基线日期：2026-10-29
-> 对应提案：`docs/sdd/proposal.md` 1.0.10
+> 对应提案：`docs/sdd/proposal.md` 1.0.12
 > 最后复核：2026-11-08
 > 状态：已实现基线与目标边界并存；每个“当前实现”与“后续演进”均显式标注。
 
@@ -154,7 +154,7 @@ src/quant_agent/
 | `Order` | id, symbol, side, quantity, limit_price, created_at, session | 数量 > 0；价格 > 0；session 合法；数量满足整手或合法零股卖出 |
 | `RunManifest` | run_id, git_sha, config_hash, data_snapshot, seed, created_at | 字段非空；内容哈希可重算并校验 |
 | `MarketSnapshot` | instrument, last, previous_close, tradable, board_volume | 是订单校验的唯一市场入参 |
-| `QualityEvent` | level, reason_code, symbol, as_of, message | level 为 pass/warn/block |
+| `QualityEvent` | level, reason_code, symbol, as_of, message, strategy_id | level 为 pass/warn/block；时间带时区；strategy_id 非空（如存在） |
 | `RiskDecision` | symbol, status, net_weight, reason_code | 每个目标都有不可变决策 |
 
 核心账本中的金额和价格使用 `Decimal`；CLI 订单价格、费用和成本配置中的 Decimal 序列化为 JSON 字符串，避免二进制浮点误差。`Bar` 的 OHLCV、`Signal.target_weight`、`BacktestSummary` 的指标和遗留信号分数仍按现有契约使用 JSON number，详见 `docs/sdd/api-spec.yaml`。
@@ -217,7 +217,7 @@ class Strategy(Protocol):
 - `from_config(config)`：配置解析与 Schema 校验。
 - `config_fingerprint()`：返回影响信号行为的稳定配置，不包含运行时缓存、计数或上次选择结果。
 - `warmup()`：最少历史窗口。
-- 失败时抛出明确异常，由注册表隔离为 `PLUGIN_CRASH`。
+- 失败时抛出明确异常：`DataUnavailable` 由注册表隔离为 `DATA_UNAVAILABLE`，其他异常隔离为 `PLUGIN_CRASH`。
 
 当前五个插件：
 
@@ -403,8 +403,8 @@ amount,available_at
 
 当前边界：
 
-- 文件适配器尚未统一注入 `QualityEventCollector`。
-- `warn` 级别事件尚未在所有报告中显著展示。
+- 文件适配器通过可选 `QualityEventCollector` 注入；策略回测和模拟盘 CLI 必须复用同一 collector。
+- `warn` 与 `block` 摘要必须进入文本/HTML 报告和机器产物。
 - 数据分层和特征存储尚未由 CLI 统一编排。
 
 对应任务：`P-004`、`P-005`。
@@ -417,7 +417,9 @@ amount,available_at
 - `warn`：允许继续，但报告必须提示。
 - `block`：阻止受影响策略进入组合层。
 
-`QualityEventCollector.blocked_strategy_ids()` 输出被阻断策略集合，`SignalComposer.compose(blocked_strategies=...)` 必须产生 `STRATEGY_BLOCKED` 决策。当前 API 已就绪，生产管线调用点仍待接线。
+`QualityEventCollector` 位于稳定端口层，数据适配器与策略编排器共享同一实例。策略注册表在调用每个插件时建立 `strategy_scope()`，当前作用域是该插件运行期间质量事件归属的权威；事件自带的冲突 `strategy_id` 会被当前作用域覆盖。运行绑定端口对未注入 collector 的适配器补记 `DataUnavailable.event`，去重窗口限定在本次运行。
+
+`QualityEventCollector.blocked_strategy_ids()` 只基于当前运行事件输出被阻断策略集合，并自动传给 `SignalComposer.compose(blocked_strategies=...)`，产生 `STRATEGY_BLOCKED` 决策。执行期读取若产生新的 `block` 事件必须 fail closed；`warn` 进入本次输出。策略回测和模拟盘输出 `quality_events` 与 `quality_summary`，后者包含 `blocked_strategies`；文本和 HTML 报告显著展示 warn/block 数量及逐条原因。
 
 ## 7. A 股规则与成交
 
@@ -606,7 +608,7 @@ model_id, arguments_sha256, arguments, output, reason_code
 | 编号 | 差距 | 影响 | 对应任务 |
 |---|---|---|---|
 | G-02 | 已由 P-002 关闭 | 策略、组合风控、实际 PIT 读取和审批身份已接线 | P-002（已完成） |
-| G-04 | 质量事件未接入生产管线 | `block` 尚未自动阻断实际运行 | P-004 |
+| G-04 | 已由 P-004 关闭 | 共享 collector、自动阻断、执行期 fail closed 和 warn/block 展示已接入 | P-004（已完成） |
 | G-05 | RunManifest/审计未强制写产物 | 运行级追溯不完整 | P-005 |
 | G-07 | 环境配置未统一加载 | CLI 行为与声明环境可能不一致 | P-007 |
 | G-08 | 高级成交参数未全部暴露到 CLI | Python API 与 CLI 能力不一致 | P-008 |

@@ -5,7 +5,6 @@ import importlib
 from collections.abc import Iterable, Sequence
 from datetime import datetime
 from decimal import Decimal
-import json
 from pathlib import Path
 from typing import Mapping
 
@@ -14,54 +13,8 @@ from quant_agent.ports.market_data import (  # noqa: F401
     DataUnavailable,
     MarketDataPortLike,
     QualityEvent,
+    QualityEventCollector,
 )
-
-
-
-class QualityEventCollector:
-    QUALITY_LEVELS = frozenset({"pass", "warn", "block"})
-
-    def __init__(self, persist_path: str | Path | None = None) -> None:
-        self.events: list[QualityEvent] = []
-        self._events_by_strategy: dict[str, list[QualityEvent]] = {}
-        self._persist_path = Path(persist_path) if persist_path is not None else None
-
-    def record(self, event: QualityEvent, strategy_id: str | None = None) -> None:
-        if event.level not in self.QUALITY_LEVELS:
-            raise ValueError(f"quality level must be one of {sorted(self.QUALITY_LEVELS)}")
-        self.events.append(event)
-        if strategy_id is not None:
-            self._events_by_strategy.setdefault(strategy_id, []).append(event)
-        if self._persist_path is not None:
-            record = {
-                "level": event.level,
-                "reason_code": event.reason_code,
-                "symbol": event.symbol,
-                "as_of": event.as_of.isoformat(),
-                "message": event.message,
-            }
-            if strategy_id is not None:
-                record["strategy_id"] = strategy_id
-            with self._persist_path.open("a", encoding="utf-8") as output:
-                output.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
-
-    def by_level(self) -> dict[str, list[QualityEvent]]:
-        partitioned: dict[str, list[QualityEvent]] = {}
-        for event in self.events:
-            partitioned.setdefault(event.level, []).append(event)
-        return partitioned
-
-    def for_strategy(self, strategy_id: str) -> list[QualityEvent]:
-        return list(self._events_by_strategy.get(strategy_id, ()))
-
-    def blocked_strategy_ids(self) -> set[str]:
-        """Strategy ids with at least one block-level event: the set the
-        portfolio layer must exclude (FR-2.3/FR-3 data-quality gate)."""
-        return {
-            strategy_id
-            for strategy_id, events in self._events_by_strategy.items()
-            if any(event.level == "block" for event in events)
-        }
 
 
 class InMemoryMarketDataPort:
@@ -151,7 +104,11 @@ class CsvMarketDataPort:
 
     DataUnavailable = DataUnavailable
 
-    def __init__(self, path: str | Path):
+    def __init__(
+        self,
+        path: str | Path,
+        quality_events: QualityEventCollector | None = None,
+    ):
         self.path = Path(path)
         try:
             with self.path.open("r", newline="", encoding="utf-8") as handle:
@@ -170,7 +127,10 @@ class CsvMarketDataPort:
                 ]
         except OSError as exc:
             raise ValueError(f"cannot read {self.path}: {exc}") from exc
-        self._port = InMemoryMarketDataPort(bars)
+        self._port = InMemoryMarketDataPort(
+            bars,
+            quality_events=quality_events,
+        )
         self.quality_events = self._port.quality_events
 
     def bars(self, instrument: str, as_of: datetime) -> list[Bar]:
@@ -183,7 +143,11 @@ class ParquetMarketDataPort:
 
     DataUnavailable = DataUnavailable
 
-    def __init__(self, path: str | Path):
+    def __init__(
+        self,
+        path: str | Path,
+        quality_events: QualityEventCollector | None = None,
+    ):
         try:
             parquet = importlib.import_module("pyarrow.parquet")
         except ImportError as exc:  # pragma: no cover - environment dependent
@@ -197,7 +161,10 @@ class ParquetMarketDataPort:
             raise ValueError(f"cannot read {self.path}: {exc}") from exc
         rows: Sequence[Mapping[str, object]] = table.to_pylist()
         bars = [_bar_from_row(row, "parquet", index) for index, row in enumerate(rows, start=1)]
-        self._port = InMemoryMarketDataPort(bars)
+        self._port = InMemoryMarketDataPort(
+            bars,
+            quality_events=quality_events,
+        )
         self.quality_events = self._port.quality_events
 
     def bars(self, instrument: str, as_of: datetime) -> list[Bar]:
@@ -223,7 +190,11 @@ class DuckDBMarketDataPort:
         "available_at",
     )
 
-    def __init__(self, path: str | Path):
+    def __init__(
+        self,
+        path: str | Path,
+        quality_events: QualityEventCollector | None = None,
+    ):
         try:
             duckdb = importlib.import_module("duckdb")
         except ImportError as exc:  # pragma: no cover - environment dependent
@@ -246,7 +217,10 @@ class DuckDBMarketDataPort:
             _bar_from_row(dict(zip(columns, row)), "duckdb", index)
             for index, row in enumerate(rows, start=1)
         ]
-        self._port = InMemoryMarketDataPort(bars)
+        self._port = InMemoryMarketDataPort(
+            bars,
+            quality_events=quality_events,
+        )
         self.quality_events = self._port.quality_events
 
     def bars(self, instrument: str, as_of: datetime) -> list[Bar]:

@@ -90,7 +90,7 @@ PYTHONPATH=src python3 -m quant_agent.cli.agent review --audit audit.jsonl
 }
 ```
 
-策略模式输出 `manifest/signals/decisions/targets/orders/fills/summary`。`industry_by_symbol` 只用于显式补充插件未携带的行业，不能替代 `SignalAdapter` 的 fail-closed 校验；缺少 accepted target 的 instrument 元数据、插件非 `Signal` 输出或插件崩溃都会退出码 2。CSV 策略模式支持 `trend_breakout`、`mean_reversion_liquid`、`low_vol_quality`、`industry_rotation`；`tail_momentum_overnight` 需要额外日线历史、指数分钟线、涨跌分布和报价快照，当前通过 Python API 固定金样验证，CLI 会显式拒绝而不是返回空信号。
+策略模式输出 `manifest/signals/decisions/targets/orders/fills/summary/quality_events/quality_summary`。数据端口与策略管线共享质量事件 collector；当前运行出现 `block` 时，受影响策略的信号不会进入组合层，并产生 `STRATEGY_BLOCKED` 决策。`industry_by_symbol` 只用于显式补充插件未携带的行业，不能替代 `SignalAdapter` 的 fail-closed 校验；缺少 accepted target 的 instrument 元数据、非数据质量类插件崩溃都会退出码 2。CSV 策略模式支持 `trend_breakout`、`mean_reversion_liquid`、`low_vol_quality`、`industry_rotation`；`tail_momentum_overnight` 需要额外日线历史、指数分钟线、涨跌分布和报价快照，当前通过 Python API 固定金样验证，CLI 会显式拒绝而不是返回空信号。
 
 ## 模拟盘命令
 
@@ -105,7 +105,7 @@ PYTHONPATH=src python3 -m quant_agent.cli.paper \
   --approved-by operator \
   --as-of 2026-10-26T14:45:00+08:00
 
-# dry-run：仍返回 manifest/signals/decisions/targets，但订单为空
+# dry-run：仍返回 manifest/signals/decisions/targets/quality_events/quality_summary，但订单为空
 PYTHONPATH=src python3 -m quant_agent.cli.paper \
   --approvals state/paper-approvals.json run \
   --strategy trend_breakout \

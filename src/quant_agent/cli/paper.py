@@ -22,11 +22,13 @@ from quant_agent.application.paper_strategy import (
     StrategyPaperOrchestrator,
     validate_paper_config,
 )
+from quant_agent.application.quality import quality_event_dict
 from quant_agent.application.identity import parse_decimal_string
 from quant_agent.application.runs import RunManifestFactory
 from quant_agent.domain.models import Instrument
 from quant_agent.ports.clock import Clock, FixedClock, SystemClock
 from quant_agent.ports.market_data import Bar
+from quant_agent.ports.market_data import QualityEventCollector
 from quant_agent.rules.calendar import StaticTradingCalendar
 from quant_agent.rules.trading import TradingRulesPlugin
 from quant_agent.strategies.factory import build_strategy_registry
@@ -206,6 +208,7 @@ def _positive_int(value: object, field: str) -> int:
 
 def _data_port_from_config(
     config: Mapping[str, object],
+    quality_events: QualityEventCollector,
 ) -> InMemoryMarketDataPort:
     data = config.get("data")
     if not isinstance(data, Mapping):
@@ -238,7 +241,10 @@ def _data_port_from_config(
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"data.bars[{index}] is invalid: {exc}") from exc
-    return InMemoryMarketDataPort(bars)
+    return InMemoryMarketDataPort(
+        bars,
+        quality_events=quality_events,
+    )
 
 
 def _registry_from_config(
@@ -287,8 +293,9 @@ def _orchestrator(
         raise ValueError("industry_by_symbol must be an object")
     if not isinstance(raw_previous, Mapping):
         raise ValueError("previous_close_by_symbol must be an object")
+    quality_events = QualityEventCollector()
     return StrategyPaperOrchestrator(
-        port=_data_port_from_config(config),
+        port=_data_port_from_config(config, quality_events),
         instruments=_instruments_from_config(config),
         registry=registry,
         rules=TradingRulesPlugin(calendar),
@@ -302,6 +309,7 @@ def _orchestrator(
         manifest_factory=RunManifestFactory(
             clock=FixedClock(as_of),
         ),
+        quality_events=quality_events,
     )
 
 
@@ -452,6 +460,11 @@ def main(
                     asdict(decision) for decision in result.decisions
                 ],
                 "targets": [asdict(target) for target in result.targets],
+                "quality_events": [
+                    quality_event_dict(event)
+                    for event in result.quality_events
+                ],
+                "quality_summary": result.quality_summary.to_dict(),
                 "orders": result.orders,
             }
         )

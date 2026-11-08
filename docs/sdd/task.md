@@ -1,6 +1,6 @@
 # A 股多策略 Agent 量化平台：任务清单
 
-> 文档版本：1.0.10
+> 文档版本：1.0.12
 > 基线日期：2026-10-29
 > 基线提交：`7052b7e`
 > 最后复核：2026-11-08
@@ -123,7 +123,7 @@ python3 -m py_compile src/tail_momentum_selector.py $(find src/quant_agent -name
 
 - 依赖：T-020、T-030
 - 范围：`StrategyRegistry`、`StrategyMetadata`、配置 Schema、五个插件、启停、版本历史、回滚和插件崩溃隔离。
-- 验收标准：插件可注册和列出；同 id 新版本可回滚；非法配置拒绝；插件异常转 `PLUGIN_CRASH` 且不中断其他插件；五个策略有固定夹具。
+- 验收标准：插件可注册和列出；同 id 新版本可回滚；非法配置拒绝；`DataUnavailable` 转 `DATA_UNAVAILABLE`、其他插件异常转 `PLUGIN_CRASH` 且不中断其他插件；五个策略有固定夹具。
 - 状态：`[x]`
 - 证据：
   - `tests/unit/strategies/test_registry.py`
@@ -215,8 +215,8 @@ python3 -m py_compile src/tail_momentum_selector.py $(find src/quant_agent -name
 - 验收标准（SC-11、AC-11）：YAML 解析成功；引用的 `components.schemas` 均存在；文档中 `P-*` 任务均有定义；CLI 参数与当前 `build_parser()` 对齐。
 - 状态：`[x]`
 - 证据：
-  - Python `yaml` 唯一键解析 + `$ref` 扫描：`schemas=36 refs=59 distinct_targets=19 missing=0`
-  - `jsonschema.Draft202012Validator.check_schema`：36 个 Schema 语法全部通过
+  - Python `yaml` 唯一键解析 + `$ref` 扫描：`schemas=37 refs=63 distinct_targets=21 missing=0`
+  - `jsonschema.Draft202012Validator.check_schema`：37 个 Schema 语法全部通过
   - 关键产物样例：`StrategyList`、`ApprovalLedger`、`BacktestEnvelope`、`StrategyBacktestOutput`、`PaperRunOutput`（完整与精简订单）、`AgentReviewOutput`、`AuditEvent`（含 `output=null` 的拒绝事件）、`LegacySignalArtifact` 均通过
   - 任务编号扫描：`P tasks defined=17 referenced=17 missing=0`
   - CLI 参数按 `src/quant_agent/cli/` 五个模块的 `build_parser()` 对齐；数值均排除 `-h/--help`：`strategy.list=0`、`backtest.run=16`（P-001 新增 `--mode`/`--as-of`）、`report.show=1`、`agent.review=1`、`paper.approve=5`（含全局 `--approvals` 与 P-002 `--as-of`）、`paper.run=5`（含全局 `--approvals`、`--dry-run` 与 `--as-of`）
@@ -295,7 +295,15 @@ python3 -m py_compile src/tail_momentum_selector.py $(find src/quant_agent -name
   3. 被阻断策略产生 `STRATEGY_BLOCKED` 决策。
   4. 报告展示 warn/block 摘要。
   5. 有端到端测试。
-- 状态：`[ ]`
+- 状态：`[x]`
+- 证据：
+  - `QualityEventCollector` 位于 `ports.market_data`；数据端口、运行绑定端口和策略注册表共享 collector。策略作用域是事件归属权威，运行级去重窗口避免历史事件污染。
+  - 策略回测与模拟盘仅按当前运行事件计算 `blocked_strategy_ids()` 并自动传入 `SignalComposer.compose()`；被阻断策略产生 `STRATEGY_BLOCKED` 决策，block 后的无关插件异常仍以 `PLUGIN_CRASH` fail closed。
+  - accepted target 的执行期数据读取会重新检查质量事件：新增 block 立即停止下单，warn 进入本次机器产物；CSV/Parquet/DuckDB/InMemory/Westock 均支持 collector 注入。
+  - 文本与 HTML 报告展示 warn/block 数量及逐条原因，HTML 动态字段全部转义；`report show` 支持 `{signals, quality_events}` 报告对象并严格校验质量字段。
+  - 测试：`tests/unit/application/test_quality_gate_pipeline.py`、`tests/unit/data/test_market_data_port.py`、`tests/unit/data/test_file_market_data_ports.py`、`tests/unit/agents/test_paper_cli.py`、`tests/unit/cli/test_cli_commands.py`、`tests/unit/cli/test_cli_report.py`、`tests/unit/strategies/test_reporting.py`。
+  - 多轮只读 Senior Code Reviewer：修复未绑定端口绕过、共享 registry 串线、跨 run 去重、执行期读取漏检、错误策略归属、插件崩溃误吞和 synthetic decision 覆盖后，最终结论 `Critical=0 / Important=0 / Ready to merge: Yes`。
+  - 本次验证：`539 passed, 1 skipped`，覆盖率 `92%`；Ruff/Mypy/源码编译通过；YAML `37 schemas / 63 refs / 21 distinct / 0 missing`。
 
 ### P-005 运行清单与审计产物接线
 
@@ -538,5 +546,7 @@ P-012 ← P-001, P-002, P-003, P-004, P-005, P-006, P-007, P-008, P-009, P-010, 
 | 2026-11-08 | 1.0.8 | 完成 P-001：策略插件接入回测编排器与 CLI，补齐端到端契约和证据 |
 | 2026-11-08 | 1.0.9 | 定义 P-002：模拟盘先经策略插件、组合风控和审批绑定，再进入共享模拟执行 |
 | 2026-11-08 | 1.0.10 | 完成 P-002：策略驱动模拟盘、完整运行身份、实际 PIT snapshot、严格配置与执行边界 |
+| 2026-11-08 | 1.0.11 | 定义 P-004：共享质量事件采集、策略自动阻断和报告摘要 |
+| 2026-11-08 | 1.0.12 | 完成 P-004：运行级质量门、执行期 fail closed、STRATEGY_BLOCKED 与 warn/block 报告 |
 
 > 研究产物，不构成任何投资建议或个股推荐。投资有风险，决策需谨慎。

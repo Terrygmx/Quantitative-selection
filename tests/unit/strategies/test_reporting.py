@@ -1,7 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
 from quant_agent.domain.models import Signal
-from quant_agent.strategies.reporting import render_signal_report
+from quant_agent.ports.market_data import QualityEvent
+from quant_agent.strategies.reporting import (
+    render_signal_report,
+    render_signal_report_html,
+)
 
 
 def test_signal_report_is_empty_when_no_signals():
@@ -71,3 +75,37 @@ def test_html_report_is_self_contained_and_escaped():
     empty = render_signal_report_html([], title="t")
     assert "No signals." in empty
     assert "不构成" in empty or "not investment advice" in empty.lower()
+
+
+def test_reports_show_warn_and_block_quality_summary():
+    now = datetime(2026, 9, 15, 14, 30, tzinfo=timezone.utc)
+    events = [
+        QualityEvent(
+            level="warn",
+            reason_code="STALE_QUOTE",
+            symbol="sh600000",
+            as_of=now,
+            message="quote is stale",
+            strategy_id="s",
+        ),
+        QualityEvent(
+            level="block",
+            reason_code="MISSING_REQUIRED_BAR",
+            symbol="<img src=x>",
+            as_of=now,
+            message="<script>alert(1)</script>",
+            strategy_id="s",
+        ),
+    ]
+
+    text = render_signal_report([], quality_events=events)
+    rendered = render_signal_report_html([], quality_events=events)
+
+    assert "Quality: warn=1 block=1" in text
+    assert "<p>Quality: warn=1 block=1</p>" in rendered
+    assert "<td>BLOCK</td>" in rendered
+    assert "<td>s</td>" in rendered
+    assert "&lt;img src=x&gt;" in rendered
+    assert "MISSING_REQUIRED_BAR" in rendered
+    assert "<script>" not in rendered
+    assert "&lt;script&gt;" in rendered

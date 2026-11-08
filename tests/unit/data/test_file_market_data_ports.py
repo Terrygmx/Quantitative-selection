@@ -13,6 +13,7 @@ from quant_agent.adapters.market_data import (
     DataUnavailable,
     ParquetMarketDataPort,
 )
+from quant_agent.ports.market_data import QualityEventCollector
 
 
 AS_OF = datetime(2026, 9, 15, 14, 30, tzinfo=timezone.utc)
@@ -94,6 +95,20 @@ def test_csv_port_raises_data_unavailable_for_unknown_instrument():
         port.bars("sh000001", AS_OF)
 
 
+def test_csv_port_shares_injected_quality_collector():
+    events = QualityEventCollector()
+    port = CsvMarketDataPort(
+        write_csv([sample_row()]),
+        quality_events=events,
+    )
+
+    with pytest.raises(DataUnavailable):
+        port.bars("sh000001", AS_OF)
+
+    assert port.quality_events is events
+    assert events.events[0].reason_code == "MISSING_REQUIRED_BAR"
+
+
 def write_parquet(rows):
     pytest.importorskip("pyarrow")
     import pyarrow as pa
@@ -149,6 +164,20 @@ def test_parquet_port_fails_closed_on_missing_file(tmp_path):
 
     with pytest.raises(ValueError, match="cannot read"):
         ParquetMarketDataPort(tmp_path / "missing.parquet")
+
+
+def test_parquet_port_shares_injected_quality_collector():
+    events = QualityEventCollector()
+    port = ParquetMarketDataPort(
+        write_parquet(parquet_rows()),
+        quality_events=events,
+    )
+
+    with pytest.raises(DataUnavailable):
+        port.bars("sh000001", AS_OF)
+
+    assert port.quality_events is events
+    assert events.events[0].reason_code == "MISSING_REQUIRED_BAR"
 
 
 def write_duckdb(rows, table="bars"):
@@ -227,6 +256,22 @@ def test_duckdb_port_fails_closed_on_missing_file(tmp_path):
 
     with pytest.raises(ValueError, match="cannot read"):
         DuckDBMarketDataPort(tmp_path / "missing.duckdb")
+
+
+def test_duckdb_port_shares_injected_quality_collector():
+    from quant_agent.adapters.market_data import DuckDBMarketDataPort
+
+    events = QualityEventCollector()
+    port = DuckDBMarketDataPort(
+        write_duckdb(duckdb_rows()),
+        quality_events=events,
+    )
+
+    with pytest.raises(DataUnavailable):
+        port.bars("sh000001", AS_OF)
+
+    assert port.quality_events is events
+    assert events.events[0].reason_code == "MISSING_REQUIRED_BAR"
 
 
 def test_duckdb_port_fails_closed_without_bars_table(tmp_path):

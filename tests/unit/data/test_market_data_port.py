@@ -136,6 +136,43 @@ def test_quality_events_are_isolated_by_strategy(tmp_path):
     collector.record(tail, strategy_id="tail_momentum_overnight")
     collector.record(risk, strategy_id="risk_review")
 
-    assert collector.for_strategy("tail_momentum_overnight") == [tail]
-    assert collector.for_strategy("risk_review") == [risk]
+    tail_events = collector.for_strategy("tail_momentum_overnight")
+    assert len(tail_events) == 1
+    assert tail_events[0].strategy_id == "tail_momentum_overnight"
+    assert tail_events[0].reason_code == "LATE_DATA"
+    risk_events = collector.for_strategy("risk_review")
+    assert len(risk_events) == 1
+    assert risk_events[0].strategy_id == "risk_review"
+    assert risk_events[0].reason_code == "DATA_AVAILABLE"
     assert collector.for_strategy("unknown") == []
+
+
+def test_record_once_and_run_scoped_blocked_strategies():
+    from quant_agent.adapters.market_data import QualityEvent, QualityEventCollector
+
+    collector = QualityEventCollector()
+    first = QualityEvent(
+        "block",
+        "MISSING_REQUIRED_BAR",
+        "sh600519",
+        AS_OF,
+        "missing",
+    )
+
+    with collector.strategy_scope("first"):
+        assert collector.record_once(first, since=0) is True
+        assert collector.record_once(first, since=0) is False
+        assert collector.record_once(first, since=1) is True
+
+    second = QualityEvent(
+        "warn",
+        "STALE_QUOTE",
+        "sh600519",
+        AS_OF,
+        "stale",
+    )
+    collector.record(second, strategy_id="second")
+
+    assert len(collector.events) == 3
+    assert collector.blocked_strategy_ids() == {"first"}
+    assert collector.blocked_strategy_ids((second,)) == set()

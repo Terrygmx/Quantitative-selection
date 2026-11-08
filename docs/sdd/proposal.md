@@ -1,6 +1,6 @@
 # A 股多策略 Agent 量化平台：SDD 提案
 
-> 文档版本：1.0.10
+> 文档版本：1.0.12
 > 基线日期：2026-10-29
 > 基线提交：`7052b7e`
 > 最后复核：2026-11-08
@@ -92,7 +92,7 @@
 
 - `backtest run` 的默认 `engine` 模式仍直接驱动回测引擎；策略插件端到端能力由显式 `strategy` 模式提供，以数据快照、策略和行业映射配置作为输入。
 - `paper run` 的底层执行器仍保留 `universe` 白名单接口；CLI 必须先由注册表产生信号，经组合风控形成目标，且只把 accepted/reduced 正权重目标传给该接口。
-- 质量事件采集器、`RunManifest` 和审计产物尚未统一接入每个 CLI 运行。
+- 质量门已按 P-004 接入策略回测与模拟盘；`RunManifest` 和审计产物尚未统一接入每个 CLI 运行。
 - 环境配置尚未被 CLI 统一加载；部分高级成交参数只在 Python API 中可注入。
 - 模拟盘现金、持仓和运行历史目前是进程内状态，尚未持久化为跨进程 paper account；审批账本是全量覆写而非原子追加。
 - 全新隔离环境仅按现有开发依赖安装时，DuckDB/Parquet 可选适配器测试缺少 `pytz`/`pyarrow`；补齐后测试通过，依赖声明待锁定。
@@ -153,7 +153,7 @@
 
 ### AC-05 插件隔离与生命周期
 
-同一 `strategy_id` 的多个版本可注册、启停和回滚；插件异常必须转为 `PLUGIN_CRASH`，不得中断其他插件。通过 `tests/unit/strategies/test_registry.py`、`tests/unit/strategies/test_plugin_isolation.py` 验证。
+同一 `strategy_id` 的多个版本可注册、启停和回滚；`DataUnavailable` 必须转为 `DATA_UNAVAILABLE`，其他插件异常必须转为 `PLUGIN_CRASH`，且不得中断其他插件。通过 `tests/unit/strategies/test_registry.py`、`tests/unit/strategies/test_plugin_isolation.py` 验证。
 
 ### AC-06 组合与风险
 

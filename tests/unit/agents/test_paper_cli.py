@@ -107,10 +107,17 @@ class ManualStrategy:
         frequency="daily",
     )
 
-    def __init__(self, signals: bool = True):
+    def __init__(
+        self,
+        signals: bool = True,
+        request_missing: bool = False,
+    ):
         self.has_signals = signals
+        self.request_missing = request_missing
 
     def on_snapshot(self, context) -> list[Signal]:
+        if self.request_missing:
+            context.data_port.bars("missing", context.as_of)
         return (
             [
                 Signal(
@@ -130,12 +137,24 @@ class ManualStrategy:
         )
 
     def config_fingerprint(self) -> dict[str, object]:
-        return {"has_signals": self.has_signals}
+        return {
+            "has_signals": self.has_signals,
+            "request_missing": self.request_missing,
+        }
 
 
-def registry(*, signals: bool = True) -> StrategyRegistry:
+def registry(
+    *,
+    signals: bool = True,
+    request_missing: bool = False,
+) -> StrategyRegistry:
     result = StrategyRegistry()
-    result.register(ManualStrategy(signals=signals))
+    result.register(
+        ManualStrategy(
+            signals=signals,
+            request_missing=request_missing,
+        )
+    )
     return result
 
 
@@ -460,6 +479,49 @@ def test_dry_run_without_signal_returns_no_signal(tmp_path, capsys):
     document = json.loads(capsys.readouterr().out)
     assert document["status"] == "NO_SIGNAL"
     assert document["orders"] == []
+    assert_contract(document, "PaperRunOutput")
+
+
+def test_paper_cli_block_event_returns_strategy_blocked_decision(
+    tmp_path, capsys
+):
+    config_file = paper_config(tmp_path / "config.json")
+    strategy_registry = registry(request_missing=True)
+    approval_file = approve(
+        tmp_path, config_file, strategy_registry=strategy_registry
+    )
+    capsys.readouterr()
+    execution = RecordingExecution()
+
+    exit_code = main(
+        [
+            "--approvals",
+            str(approval_file),
+            "run",
+            "--strategy",
+            "manual",
+            "--config",
+            str(config_file),
+            "--as-of",
+            AS_OF,
+        ],
+        execution=execution,
+        registry=strategy_registry,
+    )
+
+    assert exit_code == 0
+    document = json.loads(capsys.readouterr().out)
+    assert document["status"] == "NO_SIGNAL"
+    assert document["quality_summary"] == {
+        "warn_count": 0,
+        "block_count": 1,
+        "blocked_strategies": ["manual"],
+    }
+    assert any(
+        decision["reason_code"] == "STRATEGY_BLOCKED"
+        for decision in document["decisions"]
+    )
+    assert execution.calls == []
     assert_contract(document, "PaperRunOutput")
 
 

@@ -24,6 +24,7 @@ from quant_agent.application.strategy_backtest import (
     StrategyBacktestOrchestrator,
 )
 from quant_agent.domain.models import Instrument
+from quant_agent.ports.market_data import QualityEventCollector
 from quant_agent.rules.calendar import StaticTradingCalendar
 from quant_agent.rules.trading import TradingRulesPlugin
 from quant_agent.strategies.factory import build_strategy_registry
@@ -520,8 +521,12 @@ def _run_strategy(args: argparse.Namespace) -> dict[str, object]:
         for symbol, value in previous_close_by_symbol.items()
     }
     registry, strategy_ids, strategy_configs = _strategy_registry(config_data)
+    quality_events = QualityEventCollector()
     orchestrator = StrategyBacktestOrchestrator(
-        port=CsvMarketDataPort(args.bars),
+        port=CsvMarketDataPort(
+            args.bars,
+            quality_events=quality_events,
+        ),
         instruments=_load_instruments(args),
         config=_backtest_config(config_data),
         rules=TradingRulesPlugin(
@@ -540,6 +545,7 @@ def _run_strategy(args: argparse.Namespace) -> dict[str, object]:
             symbol: industry
             for symbol, industry in industry_by_symbol.items()
         },
+        quality_events=quality_events,
     )
     return orchestrator.run()
 

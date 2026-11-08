@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from quant_agent.cli.report import main
 
 
@@ -50,3 +52,67 @@ def test_report_show_fails_closed_on_invalid_signal(tmp_path, capsys):
     captured = capsys.readouterr()
     assert exit_code == 2
     assert captured.err.startswith("error:")
+
+
+def test_report_show_includes_quality_summary_from_report_object(
+    tmp_path, capsys
+):
+    path = tmp_path / "report.json"
+    path.write_text(
+        json.dumps(
+            {
+                "signals": [signal_dict()],
+                "quality_events": [
+                    {
+                        "level": "block",
+                        "reason_code": "MISSING_REQUIRED_BAR",
+                        "symbol": "<img src=x>",
+                        "as_of": "2026-09-15T14:30:00+00:00",
+                        "message": "<script>alert(1)</script>",
+                        "strategy_id": "trend_breakout",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["show", "--file", str(path)])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Quality: warn=0 block=1" in output
+    assert "MISSING_REQUIRED_BAR" in output
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"strategy_id": None},
+        {"symbol": 600000},
+        {"message": True},
+        {"unexpected": "field"},
+    ],
+)
+def test_report_show_rejects_schema_invalid_quality_events(
+    tmp_path, capsys, override
+):
+    event = {
+        "level": "warn",
+        "reason_code": "STALE_QUOTE",
+        "symbol": "sh600000",
+        "as_of": "2026-09-15T14:30:00+00:00",
+        "message": "quote is stale",
+        **override,
+    }
+    path = tmp_path / "report.json"
+    path.write_text(
+        json.dumps({"signals": [], "quality_events": [event]}),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["show", "--file", str(path)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert captured.err.startswith("error: invalid quality event")

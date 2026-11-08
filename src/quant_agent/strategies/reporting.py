@@ -4,34 +4,57 @@ import html as _html
 from typing import Iterable
 
 from quant_agent.domain.models import Signal
+from quant_agent.ports.market_data import QualityEvent
 
 
 DISCLAIMER_ZH = "研究产物，不构成任何投资建议或个股推荐。"
 
 
-def render_signal_report(signals: Iterable[Signal], title: str | None = None) -> str:
+def render_signal_report(
+    signals: Iterable[Signal],
+    title: str | None = None,
+    quality_events: Iterable[QualityEvent] = (),
+) -> str:
     items = list(signals)
+    quality = [
+        event for event in quality_events if event.level in ("warn", "block")
+    ]
     if title is None:
         empty_text, heading = "No tail-momentum signals.", "Tail momentum signals"
     else:
         empty_text, heading = "No signals.", title
-    if not items:
+    if not items and not quality:
         return empty_text
-    lines = [heading]
+    lines = [heading] if items else [empty_text]
     for signal in items:
         lines.append(
             f"- {signal.symbol} {signal.side} weight={signal.target_weight:.2f} "
             f"confidence={signal.confidence:.2f}"
         )
+    if quality:
+        warn_count = sum(event.level == "warn" for event in quality)
+        block_count = sum(event.level == "block" for event in quality)
+        lines.append(f"Quality: warn={warn_count} block={block_count}")
+        for event in quality:
+            strategy_id = event.strategy_id or "-"
+            lines.append(
+                f"- {event.level.upper()} {strategy_id} {event.symbol} "
+                f"{event.reason_code}: {event.message}"
+            )
     return "\n".join(lines)
 
 
 def render_signal_report_html(
-    signals: Iterable[Signal], title: str = "Strategy signals"
+    signals: Iterable[Signal],
+    title: str = "Strategy signals",
+    quality_events: Iterable[QualityEvent] = (),
 ) -> str:
     """Self-contained HTML report: no external resources, all dynamic text
     escaped, disclaimer always present (FR-6.3)."""
     items = list(signals)
+    quality = [
+        event for event in quality_events if event.level in ("warn", "block")
+    ]
     title_escaped = _html.escape(title)
     if items:
         rows = []
@@ -53,6 +76,27 @@ def render_signal_report_html(
         )
     else:
         body = "<p>No signals.</p>"
+    if quality:
+        warn_count = sum(event.level == "warn" for event in quality)
+        block_count = sum(event.level == "block" for event in quality)
+        quality_rows = []
+        for event in quality:
+            quality_rows.append(
+                "<tr>"
+                f"<td>{_html.escape(event.level.upper())}</td>"
+                f"<td>{_html.escape(event.strategy_id or '-')}</td>"
+                f"<td>{_html.escape(event.symbol)}</td>"
+                f"<td>{_html.escape(event.reason_code)}</td>"
+                f"<td>{_html.escape(event.message)}</td>"
+                "</tr>"
+            )
+        body += (
+            "<h2>Data quality</h2>"
+            f"<p>Quality: warn={warn_count} block={block_count}</p>"
+            "<table><thead><tr><th>Level</th><th>Strategy</th>"
+            "<th>Symbol</th><th>Reason</th><th>Message</th></tr></thead>"
+            f"<tbody>{''.join(quality_rows)}</tbody></table>"
+        )
     return (
         '<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">'
         f"<title>{title_escaped}</title>"

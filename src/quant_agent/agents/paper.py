@@ -19,8 +19,10 @@ from quant_agent.application.portfolio import (
     RiskDecision,
     TargetPosition,
 )
+from quant_agent.application.quality import QualitySummary
 from quant_agent.domain.models import Instrument, Order, RunManifest
 from quant_agent.ports.clock import Clock, SystemClock
+from quant_agent.ports.market_data import QualityEvent
 from quant_agent.rules.trading import (
     MarketSnapshot,
     TradingRulesPlugin,
@@ -72,6 +74,8 @@ class PaperRunResult:
     signals: tuple[ComposerSignal, ...]
     decisions: tuple[RiskDecision, ...]
     targets: tuple[TargetPosition, ...]
+    quality_events: tuple[QualityEvent, ...]
+    quality_summary: QualitySummary
 
 
 class PaperExecution(Protocol):
@@ -235,6 +239,8 @@ class PaperGateway:
             signals=plan.signals,
             decisions=plan.decisions,
             targets=plan.targets,
+            quality_events=plan.quality_events,
+            quality_summary=plan.quality_summary,
         )
 
 

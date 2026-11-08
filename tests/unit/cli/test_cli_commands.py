@@ -75,7 +75,13 @@ def test_backtest_strategy_mode_returns_strategy_audit_trail(tmp_path, capsys):
     report = json.loads(capsys.readouterr().out)
     assert set(report) == {
         "manifest", "signals", "decisions", "targets",
-        "orders", "fills", "summary",
+        "orders", "fills", "summary", "quality_events", "quality_summary",
+    }
+    assert report["quality_events"] == []
+    assert report["quality_summary"] == {
+        "warn_count": 0,
+        "block_count": 0,
+        "blocked_strategies": [],
     }
     assert report["signals"][0]["symbol"] == symbol
     assert report["orders"][0]["status"] == "FILLED"

@@ -21,6 +21,11 @@ from quant_agent.application.portfolio import (
     SignalComposer,
     TargetPosition,
 )
+from quant_agent.application.quality import (
+    QualitySummary,
+    blocked_quality_decisions,
+    summarize_quality,
+)
 from quant_agent.application.runs import RunManifestFactory
 from quant_agent.application.strategy_identity import (
     strategy_run_identity,
@@ -29,7 +34,11 @@ from quant_agent.application.strategy_identity import (
 )
 from quant_agent.application.strategy_backtest import RunBoundMarketDataPort
 from quant_agent.domain.models import Instrument, RunManifest, Signal
-from quant_agent.ports.market_data import MarketDataPort
+from quant_agent.ports.market_data import (
+    MarketDataPort,
+    QualityEvent,
+    QualityEventCollector,
+)
 from quant_agent.rules.trading import TradingRulesPlugin
 from quant_agent.strategies.context import StrategyContext
 from quant_agent.strategies.registry import StrategyRegistry
@@ -224,6 +233,8 @@ class PaperStrategyPlan:
     targets: tuple[TargetPosition, ...]
     execution_symbols: tuple[str, ...]
     source_signal_count: int
+    quality_events: tuple[QualityEvent, ...]
+    quality_summary: QualitySummary
     manifest: RunManifest
 
 
@@ -241,9 +252,22 @@ class StrategyPaperOrchestrator:
         previous_close_by_symbol: Mapping[str, object] | None = None,
         portfolio_risk: PortfolioRiskConfig | None = None,
         manifest_factory: RunManifestFactory | None = None,
+        quality_events: QualityEventCollector | None = None,
         git_sha: str = "working-tree",
     ) -> None:
         self.port = port
+        port_events = getattr(port, "quality_events", None)
+        if (
+            quality_events is not None
+            and port_events is not None
+            and quality_events is not port_events
+        ):
+            raise ValueError(
+                "data port and strategy pipeline must share one quality collector"
+            )
+        self.quality_events = (
+            quality_events or port_events or QualityEventCollector()
+        )
         self.instruments = dict(instruments)
         self.registry = registry
         self.rules = rules
@@ -273,15 +297,38 @@ class StrategyPaperOrchestrator:
         config: Mapping[str, object],
         as_of: datetime,
     ) -> PaperStrategyPlan:
+        quality_start = len(self.quality_events.events)
         identity = self.identity(strategy_id, config, as_of)
         normalized_as_of = identity.as_of
-        bound_port = RunBoundMarketDataPort(self.port, normalized_as_of)
+        bound_port = RunBoundMarketDataPort(
+            self.port,
+            normalized_as_of,
+            quality_events=self.quality_events,
+        )
         context = StrategyContext(bound_port, normalized_as_of)
-        plugin_result = self.registry.run_selected((strategy_id,), context)
-        if plugin_result.failures:
+        plugin_result = self.registry.run_selected(
+            (strategy_id,),
+            context,
+            quality_events=self.quality_events,
+        )
+        run_quality_events = tuple(
+            self.quality_events.events[quality_start:]
+        )
+        blocked_strategies = self.quality_events.blocked_strategy_ids(
+            run_quality_events
+        )
+        blocking_failures = [
+            failure
+            for failure in plugin_result.failures
+            if not (
+                failure.reason_code == "DATA_UNAVAILABLE"
+                and failure.strategy_id in blocked_strategies
+            )
+        ]
+        if blocking_failures:
             details = "; ".join(
                 f"{failure.strategy_id}: {failure.reason_code}: {failure.message}"
-                for failure in plugin_result.failures
+                for failure in blocking_failures
             )
             raise ValueError(f"strategy plugins failed: {details}")
         if not all(
@@ -301,6 +348,7 @@ class StrategyPaperOrchestrator:
         )
         composition = SignalComposer(self.portfolio_risk).compose(
             list(adapted.signals),
+            blocked_strategies=blocked_strategies,
             as_of=normalized_as_of,
         )
         accepted = tuple(
@@ -352,6 +400,19 @@ class StrategyPaperOrchestrator:
             data_snapshot=data_snapshot,
             seed=0,
         )
+        quality_summary = summarize_quality(
+            run_quality_events,
+            blocked_strategies,
+        )
+        decisions = (
+            adapted.decisions
+            + composition.decisions
+            + blocked_quality_decisions(
+                run_quality_events,
+                {strategy_id: identity.strategy_version},
+                adapted.decisions + composition.decisions,
+            )
+        )
         return PaperStrategyPlan(
             strategy_id=strategy_id,
             strategy_version=identity.strategy_version,
@@ -359,12 +420,14 @@ class StrategyPaperOrchestrator:
             data_snapshot=data_snapshot,
             read_snapshot=data_snapshot,
             signals=adapted.signals,
-            decisions=adapted.decisions + composition.decisions,
+            decisions=decisions,
             targets=composition.targets,
             execution_symbols=tuple(
                 target.symbol for target in accepted
             ),
             source_signal_count=len(domain_signals),
+            quality_events=run_quality_events,
+            quality_summary=quality_summary,
             manifest=manifest,
         )
 

@@ -15,6 +15,11 @@ from quant_agent.application.backtest import (
 from quant_agent.application.identity import canonical_hash
 from quant_agent.application.metrics import BacktestMetrics
 from quant_agent.application.portfolio import PortfolioRiskConfig, SignalAdapter, SignalComposer
+from quant_agent.application.quality import (
+    blocked_quality_decisions,
+    quality_event_dict,
+    summarize_quality,
+)
 from quant_agent.application.runs import RunManifestFactory
 from quant_agent.application.strategy_identity import (
     strategy_run_identity,
@@ -22,7 +27,11 @@ from quant_agent.application.strategy_identity import (
     validate_signal_provenance,
 )
 from quant_agent.domain.models import Instrument, RunManifest, Signal
-from quant_agent.ports.market_data import DataUnavailable, MarketDataPort
+from quant_agent.ports.market_data import (
+    DataUnavailable,
+    MarketDataPort,
+    QualityEventCollector,
+)
 from quant_agent.rules.trading import TradingRulesPlugin
 from quant_agent.strategies.context import StrategyContext
 from quant_agent.strategies.registry import StrategyRegistry
@@ -33,10 +42,23 @@ CN_MARKET_TZ = ZoneInfo("Asia/Shanghai")
 class RunBoundMarketDataPort:
     """PIT-bound wrapper that records every read used by a strategy run."""
 
-    def __init__(self, port: MarketDataPort, as_of: datetime):
+    def __init__(
+        self,
+        port: MarketDataPort,
+        as_of: datetime,
+        quality_events: QualityEventCollector | None = None,
+    ):
         self._port = port
         self._as_of = as_of
+        self._quality_events = quality_events
+        self._quality_start = (
+            len(quality_events.events) if quality_events is not None else 0
+        )
         self._reads: dict[tuple[str, str], dict[str, object]] = {}
+
+    @property
+    def quality_events(self) -> QualityEventCollector | None:
+        return self._quality_events
 
     def bars(self, instrument: str, as_of: datetime) -> list[Any]:
         if as_of.tzinfo is None:
@@ -50,7 +72,12 @@ class RunBoundMarketDataPort:
         key = (instrument, requested.isoformat())
         try:
             bars = self._port.bars(instrument, requested)
-        except DataUnavailable:
+        except DataUnavailable as exc:
+            if self._quality_events is not None:
+                self._quality_events.record_once(
+                    exc.event,
+                    since=self._quality_start,
+                )
             self._reads[key] = {
                 "instrument": instrument,
                 "as_of": requested,
@@ -92,10 +119,23 @@ class StrategyBacktestOrchestrator:
         previous_close_by_symbol: Mapping[str, object] | None = None,
         portfolio_risk: PortfolioRiskConfig | None = None,
         manifest_factory: RunManifestFactory | None = None,
+        quality_events: QualityEventCollector | None = None,
         git_sha: str = "working-tree",
         manifest: RunManifest | None = None,
     ):
         self.port = port
+        port_events = getattr(port, "quality_events", None)
+        if (
+            quality_events is not None
+            and port_events is not None
+            and quality_events is not port_events
+        ):
+            raise ValueError(
+                "data port and strategy pipeline must share one quality collector"
+            )
+        self.quality_events = (
+            quality_events or port_events or QualityEventCollector()
+        )
         self.instruments = dict(instruments)
         self.config = config
         self.rules = rules
@@ -168,18 +208,41 @@ class StrategyBacktestOrchestrator:
             raise ValueError("supplied RunManifest config_hash does not match inputs")
 
     def run(self) -> dict[str, object]:
-        bound_port = RunBoundMarketDataPort(self.port, self.as_of)
+        quality_start = len(self.quality_events.events)
+        bound_port = RunBoundMarketDataPort(
+            self.port,
+            self.as_of,
+            quality_events=self.quality_events,
+        )
         context = StrategyContext(bound_port, self.as_of)
         enabled = self.registry.list()
         enabled_ids = {item.strategy_id for item in enabled}
         unknown = [item for item in self.strategy_ids if item not in enabled_ids]
         if unknown:
             raise ValueError(f"unknown or disabled strategy ids: {', '.join(unknown)}")
-        plugin_result = self.registry.run_selected(self.strategy_ids, context)
-        if plugin_result.failures:
+        plugin_result = self.registry.run_selected(
+            self.strategy_ids,
+            context,
+            quality_events=self.quality_events,
+        )
+        run_quality_events = tuple(
+            self.quality_events.events[quality_start:]
+        )
+        blocked_strategies = self.quality_events.blocked_strategy_ids(
+            run_quality_events
+        )
+        blocking_failures = [
+            failure
+            for failure in plugin_result.failures
+            if not (
+                failure.reason_code == "DATA_UNAVAILABLE"
+                and failure.strategy_id in blocked_strategies
+            )
+        ]
+        if blocking_failures:
             details = "; ".join(
                 f"{failure.strategy_id}: {failure.reason_code}: {failure.message}"
-                for failure in plugin_result.failures
+                for failure in blocking_failures
             )
             raise ValueError(f"strategy plugins failed: {details}")
         if not all(isinstance(signal, Signal) for signal in plugin_result.signals):
@@ -195,6 +258,7 @@ class StrategyBacktestOrchestrator:
         composer = SignalComposer(self.portfolio_risk)
         composition = composer.compose(
             list(adapted.signals),
+            blocked_strategies=blocked_strategies,
             as_of=self.as_of,
         )
         accepted = [
@@ -214,7 +278,23 @@ class StrategyBacktestOrchestrator:
             raise ValueError(
                 f"signal symbols lack instrument metadata: {', '.join(missing)}"
             )
-        visible_by_symbol = self._visible_by_symbol(bound_port)
+        execution_quality_start = len(self.quality_events.events)
+        visible_by_symbol = self._visible_by_symbol(
+            bound_port,
+            tuple(target.symbol for target in accepted),
+        )
+        execution_quality_events = tuple(
+            self.quality_events.events[execution_quality_start:]
+        )
+        if any(
+            event.level == "block" for event in execution_quality_events
+        ):
+            raise ValueError(
+                "data quality block during execution data read"
+            )
+        run_quality_events = tuple(
+            self.quality_events.events[quality_start:]
+        )
         engine = self._engine(accepted, visible_by_symbol)
         engine.run()
         orders = self._orders(engine)
@@ -234,6 +314,19 @@ class StrategyBacktestOrchestrator:
                 seed=0,
             )
         final_equity = self._final_equity(engine, visible_by_symbol)
+        quality_summary = summarize_quality(
+            run_quality_events,
+            blocked_strategies,
+        )
+        decisions = (
+            adapted.decisions
+            + composition.decisions
+            + blocked_quality_decisions(
+                run_quality_events,
+                self.strategy_versions,
+                adapted.decisions + composition.decisions,
+            )
+        )
         metrics = BacktestMetrics(
             initial_cash=self.config.initial_cash,
             final_equity=final_equity,
@@ -243,11 +336,15 @@ class StrategyBacktestOrchestrator:
         return {
             "manifest": manifest.to_dict(),
             "signals": self._signals(adapted.signals),
-            "decisions": self._decisions(adapted.decisions + composition.decisions),
+            "decisions": self._decisions(decisions),
             "targets": self._targets(composition.targets),
             "orders": orders,
             "fills": fills,
             "summary": metrics.summary(),
+            "quality_events": [
+                quality_event_dict(event) for event in run_quality_events
+            ],
+            "quality_summary": quality_summary.to_dict(),
         }
 
     def _engine(
@@ -334,10 +431,12 @@ class StrategyBacktestOrchestrator:
         return enriched
 
     def _visible_by_symbol(
-        self, port: MarketDataPort
+        self,
+        port: MarketDataPort,
+        symbols: Sequence[str],
     ) -> dict[str, list[Any]]:
         visible: dict[str, list[Any]] = {}
-        for symbol in sorted(self.instruments):
+        for symbol in sorted(set(symbols)):
             try:
                 visible[symbol] = port.bars(symbol, self.as_of)
             except DataUnavailable:
@@ -435,7 +534,7 @@ class StrategyBacktestOrchestrator:
     ) -> Decimal:
         holding_value = Decimal("0")
         for symbol in self.instruments:
-            bars = visible_by_symbol[symbol]
+            bars = visible_by_symbol.get(symbol, ())
             position = engine.position(symbol)
             quantity = position.settled_qty + position.unsettled_buy_qty
             if bars and quantity:
